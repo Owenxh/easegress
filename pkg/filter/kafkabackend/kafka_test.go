@@ -18,16 +18,17 @@
 package kafka
 
 import (
-	stdcontext "context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Shopify/sarama"
 	"github.com/megaease/easegress/pkg/context"
 	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/pipeline"
-
-	"github.com/Shopify/sarama"
-	"github.com/eclipse/paho.mqtt.golang/packets"
+	"github.com/megaease/easegress/pkg/object/httppipeline"
+	"github.com/megaease/easegress/pkg/tracing"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -58,79 +59,83 @@ func newMockAsyncProducer() sarama.AsyncProducer {
 	}
 }
 
-func defaultFilterSpec(spec *Spec) *pipeline.FilterSpec {
-	meta := &pipeline.FilterMetaSpec{
-		Name:     "kafka-demo",
+func defaultFilterSpec(spec *Spec) *httppipeline.FilterSpec {
+	meta := &httppipeline.FilterMetaSpec{
+		Name:     "kafka",
 		Kind:     Kind,
 		Pipeline: "pipeline-demo",
-		Protocol: context.MQTT,
 	}
-	filterSpec := pipeline.MockFilterSpec(nil, nil, "", meta, spec)
+	filterSpec := httppipeline.MockFilterSpec(nil, nil, "", meta, spec)
 	return filterSpec
-}
-
-func newContext(cid string, topic string, payload []byte) context.MQTTContext {
-	client := &context.MockMQTTClient{
-		MockClientID: cid,
-	}
-	packet := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
-	packet.TopicName = topic
-	packet.Payload = payload
-	ctx := context.NewMQTTContext(stdcontext.Background(), client, packet)
-	return ctx
 }
 
 func TestKafka(t *testing.T) {
 	assert := assert.New(t)
-	spec := &Spec{
-		Backend: []string{"localhost:1234"},
-	}
-	filterSpec := defaultFilterSpec(spec)
 	k := &Kafka{}
-	assert.Panics(func() { k.Init(filterSpec) }, "kafka should panic for invalid backend")
+	filterSpec := defaultFilterSpec(&Spec{})
 
+	assert.NotEmpty(k.Description())
+	assert.Nil(k.Status())
+	assert.Panics(func() { k.Init(filterSpec) }, "no valid backend should panic")
+
+	newK := &Kafka{}
+	assert.Panics(func() { newK.Inherit(filterSpec, k) })
+}
+
+func TestHandleHTTP(t *testing.T) {
+	assert := assert.New(t)
 	kafka := Kafka{
+		spec: &Spec{
+			Topic: &Topic{
+				Default: "default-topic",
+				Dynamic: &Dynamic{
+					Header: "x-kafka-topic",
+				},
+			},
+		},
 		producer: newMockAsyncProducer(),
 		done:     make(chan struct{}),
 	}
+	kafka.setHeader(kafka.spec)
+	go kafka.checkProduceError()
+	defer kafka.Close()
 
-	mqttCtx := newContext("test", "a/b/c", []byte("text"))
-	kafka.HandleMQTT(mqttCtx)
+	// test header
+	req, err := http.NewRequest(http.MethodPost, "127.0.0.1", strings.NewReader("text"))
+	assert.Nil(err)
+	req.Header.Add("x-kafka-topic", "kafka")
+	w := httptest.NewRecorder()
+	ctx := context.New(w, req, tracing.NoopTracing, "no trace")
+	ctx.SetHandlerCaller(func(lastResult string) string {
+		return lastResult
+	})
+
+	ans := kafka.Handle(ctx)
+	assert.Equal("", ans)
+
 	msg := <-kafka.producer.(*mockAsyncProducer).ch
-	assert.Equal(msg.Topic, mqttCtx.PublishPacket().TopicName)
+	assert.Equal("kafka", msg.Topic)
 	assert.Equal(0, len(msg.Headers))
 	value, err := msg.Value.Encode()
 	assert.Nil(err)
 	assert.Equal("text", string(value))
-}
 
-func TestKafkaWithKVMap(t *testing.T) {
-	assert := assert.New(t)
-	spec := &Spec{
-		Backend: []string{"localhost:1234"},
-		KVMap: &KVMap{
-			TopicKey:  "topic",
-			HeaderKey: "headers",
-		},
-	}
+	// test default
+	req, err = http.NewRequest(http.MethodPost, "127.0.0.1", strings.NewReader("text"))
+	assert.Nil(err)
+	w = httptest.NewRecorder()
+	ctx = context.New(w, req, tracing.NoopTracing, "no trace")
+	ctx.SetHandlerCaller(func(lastResult string) string {
+		return lastResult
+	})
 
-	kafka := Kafka{
-		spec:     spec,
-		producer: newMockAsyncProducer(),
-		done:     make(chan struct{}),
-	}
-	kafka.setKV()
-	defer kafka.Close()
+	ans = kafka.Handle(ctx)
+	assert.Equal("", ans)
 
-	mqttCtx := newContext("test", "a/b/c", []byte("text"))
-	mqttCtx.SetKV("topic", "123")
-	mqttCtx.SetKV("headers", map[string]string{"1": "a"})
-
-	kafka.HandleMQTT(mqttCtx)
-	msg := <-kafka.producer.(*mockAsyncProducer).ch
-	assert.Equal("123", msg.Topic)
-	assert.Equal(1, len(msg.Headers))
-	value, err := msg.Value.Encode()
+	msg = <-kafka.producer.(*mockAsyncProducer).ch
+	assert.Equal("default-topic", msg.Topic)
+	assert.Equal(0, len(msg.Headers))
+	value, err = msg.Value.Encode()
 	assert.Nil(err)
 	assert.Equal("text", string(value))
 }

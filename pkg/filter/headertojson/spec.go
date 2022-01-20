@@ -15,25 +15,17 @@
  * limitations under the License.
  */
 
-package kafka
+package headertojson
 
 type (
-	// Spec is spec of Kafka
+	// Spec is spec of HeaderToJson
 	Spec struct {
-		Backend []string `yaml:"backend" jsonschema:"required,uniqueItems=true"`
-		Topic   *Topic   `yaml:"topic" jsonschema:"required"`
-		KVMap   *KVMap   `yaml:"mqtt" jsonschema:"required"`
+		HeaderMap []*HeaderMap `yaml:"headerMap" jsonschema:"required"`
 	}
 
-	// Topic defined ways to get Kafka topic
-	Topic struct {
-		Default string `yaml:"default" jsonschema:"required"`
-	}
-
-	// KVMap defines ways to get kafka data from MQTTContext kv map
-	KVMap struct {
-		TopicKey   string `yaml:"topicKey" jsonschema:"required"`
-		HeaderKey  string `yaml:"headerKey" jsonschema:"required"`
-		PayloadKey string `yaml:"payloadKey" jsonschema:"required"`
+	// Header defines relationship between http header and json
+	HeaderMap struct {
+		Header string `yaml:"header" jsonschema:"required"`
+		JSON   string `yaml:"json" jsonschema:"required"`
 	}
 )

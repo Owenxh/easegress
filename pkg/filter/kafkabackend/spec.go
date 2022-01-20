@@ -22,18 +22,16 @@ type (
 	Spec struct {
 		Backend []string `yaml:"backend" jsonschema:"required,uniqueItems=true"`
 		Topic   *Topic   `yaml:"topic" jsonschema:"required"`
-		KVMap   *KVMap   `yaml:"mqtt" jsonschema:"required"`
 	}
 
 	// Topic defined ways to get Kafka topic
 	Topic struct {
-		Default string `yaml:"default" jsonschema:"required"`
+		Default string   `yaml:"default" jsonschema:"required"`
+		Dynamic *Dynamic `yaml:"dynamic" jsonschema:"omitempty"`
 	}
 
-	// KVMap defines ways to get kafka data from MQTTContext kv map
-	KVMap struct {
-		TopicKey   string `yaml:"topicKey" jsonschema:"required"`
-		HeaderKey  string `yaml:"headerKey" jsonschema:"required"`
-		PayloadKey string `yaml:"payloadKey" jsonschema:"required"`
+	// Dynamic defines dynamic ways to get Kafka topic from http request
+	Dynamic struct {
+		Header string `yaml:"header" jsonschema:"omitempty"`
 	}
 )
