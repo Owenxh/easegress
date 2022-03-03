@@ -13,7 +13,7 @@ GO_PATH := $(shell go env | grep GOPATH | awk -F '"' '{print $$2}')
 HTTPSERVER_TEST_PATH := build/test
 
 # Version
-RELEASE?=v1.4.1
+RELEASE?=v1.5.0
 
 # Git Related
 GIT_REPO_INFO=$(shell cd ${MKFILE_DIR} && git config --get remote.origin.url)
@@ -91,6 +91,7 @@ build_docker:
 	docker build -t megaease/easegress:${RELEASE} -f ./build/package/Dockerfile .
 	docker tag megaease/easegress:${RELEASE} megaease/easegress:latest
 	docker tag megaease/easegress:latest megaease/easegress:server-sidecar
+	docker tag megaease/easegress:latest megaease/easegress:easemesh
 
 test:
 	cd ${MKFILE_DIR}
