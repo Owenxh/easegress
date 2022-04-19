@@ -66,8 +66,7 @@ type (
 	WalkFunc = supervisor.WalkFunc
 
 	// Spec describes TrafficController.
-	Spec struct {
-	}
+	Spec struct{}
 
 	// Status is the status of namespaces
 	Status struct {
@@ -116,6 +115,26 @@ func (ns *Namespace) GetHandler(name string) (protocol.HTTPHandler, bool) {
 	return handler, true
 }
 
+func (hss *HTTPServerStatus) toSyncStatus() *supervisor.Status {
+	return &supervisor.Status{ObjectStatus: hss}
+}
+
+func (hps *HTTPPipelineStatus) toSyncStatus() *supervisor.Status {
+	return &supervisor.Status{ObjectStatus: hps}
+}
+
+// ToSyncStatus returns http servers and pipelines in a map
+func (sisn *StatusInSameNamespace) ToSyncStatus() map[string]*supervisor.Status {
+	objects := make(map[string]*supervisor.Status)
+	for key, server := range sisn.HTTPServers {
+		objects[key] = server.toSyncStatus()
+	}
+	for key, pipeline := range sisn.HTTPPipelines {
+		objects[key] = pipeline.toSyncStatus()
+	}
+	return objects
+}
+
 // Category returns the category of TrafficController.
 func (tc *TrafficController) Category() supervisor.ObjectCategory {
 	return Category
@@ -155,8 +174,8 @@ func (tc *TrafficController) reload(previousGeneration *TrafficController) {
 
 // CreateHTTPServerForSpec creates HTTP server with a spec
 func (tc *TrafficController) CreateHTTPServerForSpec(namespace string, superSpec *supervisor.Spec) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	entity, err := tc.super.NewObjectEntityFromSpec(superSpec)
 	if err != nil {
 		return nil, err
@@ -166,8 +185,8 @@ func (tc *TrafficController) CreateHTTPServerForSpec(namespace string, superSpec
 
 // CreateHTTPServer creates HTTP server
 func (tc *TrafficController) CreateHTTPServer(namespace string, entity *supervisor.ObjectEntity) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	if namespace == "" {
 		return nil, fmt.Errorf("empty namespace")
 	}
@@ -194,8 +213,8 @@ func (tc *TrafficController) CreateHTTPServer(namespace string, entity *supervis
 
 // UpdateHTTPServerForSpec updates HTTP server with a Spec
 func (tc *TrafficController) UpdateHTTPServerForSpec(namespace string, superSpec *supervisor.Spec) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	entity, err := tc.super.NewObjectEntityFromSpec(superSpec)
 	if err != nil {
 		return nil, err
@@ -205,8 +224,8 @@ func (tc *TrafficController) UpdateHTTPServerForSpec(namespace string, superSpec
 
 // UpdateHTTPServer updates HTTP server
 func (tc *TrafficController) UpdateHTTPServer(namespace string, entity *supervisor.ObjectEntity) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
 
@@ -232,8 +251,8 @@ func (tc *TrafficController) UpdateHTTPServer(namespace string, entity *supervis
 
 // ApplyHTTPServerForSpec applies HTTP servers with a Spec
 func (tc *TrafficController) ApplyHTTPServerForSpec(namespace string, superSpec *supervisor.Spec) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	entity, err := tc.super.NewObjectEntityFromSpec(superSpec)
 	if err != nil {
 		return nil, err
@@ -243,8 +262,8 @@ func (tc *TrafficController) ApplyHTTPServerForSpec(namespace string, superSpec 
 
 // ApplyHTTPServer applies HTTP Server
 func (tc *TrafficController) ApplyHTTPServer(namespace string, entity *supervisor.ObjectEntity) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	if namespace == "" {
 		return nil, fmt.Errorf("empty namespace")
 	}
@@ -389,8 +408,8 @@ func (tc *TrafficController) WalkHTTPPipelines(namespace string, walkFn WalkFunc
 
 // CreateHTTPPipelineForSpec creates a HTTP pipeline by a spec
 func (tc *TrafficController) CreateHTTPPipelineForSpec(namespace string, superSpec *supervisor.Spec) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	entity, err := tc.super.NewObjectEntityFromSpec(superSpec)
 	if err != nil {
 		return nil, err
@@ -400,8 +419,8 @@ func (tc *TrafficController) CreateHTTPPipelineForSpec(namespace string, superSp
 
 // CreateHTTPPipeline creates a HTTP pipeline
 func (tc *TrafficController) CreateHTTPPipeline(namespace string, entity *supervisor.ObjectEntity) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	if namespace == "" {
 		return nil, fmt.Errorf("empty namespace")
 	}
@@ -428,8 +447,8 @@ func (tc *TrafficController) CreateHTTPPipeline(namespace string, entity *superv
 
 // UpdateHTTPPipelineForSpec updates the HTTP pipeline with a Spec
 func (tc *TrafficController) UpdateHTTPPipelineForSpec(namespace string, superSpec *supervisor.Spec) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	entity, err := tc.super.NewObjectEntityFromSpec(superSpec)
 	if err != nil {
 		return nil, err
@@ -439,8 +458,8 @@ func (tc *TrafficController) UpdateHTTPPipelineForSpec(namespace string, superSp
 
 // UpdateHTTPPipeline updates the HTTP pipeline
 func (tc *TrafficController) UpdateHTTPPipeline(namespace string, entity *supervisor.ObjectEntity) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
 
@@ -466,8 +485,8 @@ func (tc *TrafficController) UpdateHTTPPipeline(namespace string, entity *superv
 
 // ApplyHTTPPipelineForSpec applies the HTTP pipeline with a Spec
 func (tc *TrafficController) ApplyHTTPPipelineForSpec(namespace string, superSpec *supervisor.Spec) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	entity, err := tc.super.NewObjectEntityFromSpec(superSpec)
 	if err != nil {
 		return nil, err
@@ -477,8 +496,8 @@ func (tc *TrafficController) ApplyHTTPPipelineForSpec(namespace string, superSpe
 
 // ApplyHTTPPipeline applies the HTTP pipeline
 func (tc *TrafficController) ApplyHTTPPipeline(namespace string, entity *supervisor.ObjectEntity) (
-	*supervisor.ObjectEntity, error) {
-
+	*supervisor.ObjectEntity, error,
+) {
 	if namespace == "" {
 		return nil, fmt.Errorf("empty namespace")
 	}

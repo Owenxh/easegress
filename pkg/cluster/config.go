@@ -104,13 +104,14 @@ func CreateStaticClusterEtcdConfig(opt *option.Options) (*embed.Config, error) {
 	}
 	ec.InitialCluster = opt.InitialClusterToString()
 
-	logger.Infof("etcd config: init-cluster:%s cluster-state:%s force-new-cluster:%v",
+	logger.Infof("etcd config: advertise-client-urls: %+v advertise-peer-urls: %+v init-cluster: %s cluster-state: %s force-new-cluster: %v",
+		ec.ACUrls, ec.APUrls,
 		ec.InitialCluster, ec.ClusterState, ec.ForceNewCluster)
 
 	return ec, nil
 }
 
-// CreateEtcdConfig creates an embedded etcd config that starts the cluster by adding member by member.
+// CreateEtcdConfig creates an embedded etcd config that starts the cluster by adding one member at a time. Deprecated: Use CreateStaticClusterEtcdConfig instead.
 func CreateEtcdConfig(opt *option.Options, members *members) (*embed.Config, error) {
 	ec := embed.NewConfig()
 
@@ -175,7 +176,8 @@ func CreateEtcdConfig(opt *option.Options, members *members) (*embed.Config, err
 		ec.InitialCluster = members.initCluster()
 	}
 
-	logger.Infof("etcd config: init-cluster:%s cluster-state:%s force-new-cluster:%v",
+	logger.Infof("etcd config: advertise-client-urls: %+v advertise-peer-urls: %+v init-cluster: %s cluster-state: %s force-new-cluster: %v",
+		ec.ACUrls, ec.APUrls,
 		ec.InitialCluster, ec.ClusterState, ec.ForceNewCluster)
 
 	return ec, nil
