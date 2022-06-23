@@ -20,6 +20,7 @@ package proxy
 import (
 	"bytes"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,8 +58,10 @@ func TestRequest(t *testing.T) {
 
 	p := pool{}
 	sr := strings.NewReader("this is the raw body")
-	req, _ := p.newRequest(ctx, &server, sr, requestPool, httpstatResultPool)
+	ctx.Request().Header().Add(httpheader.KeyContentLength, strconv.Itoa(sr.Len()))
+	req, _ := p.newRequest(ctx, &server, sr, requestPool, httpStatResultPool)
 	defer requestPool.Put(req) // recycle request
+	assert.Equal(int64(sr.Len()), req.std.ContentLength)
 
 	req.start()
 	tm := req.startTime()
@@ -83,7 +86,7 @@ func TestRequest(t *testing.T) {
 	ctx.MockedRequest.MockedMethod = func() string {
 		return "ééé" // not tokenable, should fail
 	}
-	req, err := p.newRequest(ctx, &server, nil, requestPool, httpstatResultPool)
+	req, err := p.newRequest(ctx, &server, nil, requestPool, httpStatResultPool)
 	assert.Nil(req)
 	assert.NotNil(err)
 }
@@ -102,7 +105,7 @@ func TestResultState(t *testing.T) {
 }
 
 func TestRequestStatus(t *testing.T) {
-	statResult := httpstatResultPool.Get().(*httpstat.Result)
+	statResult := httpStatResultPool.Get().(*httpstat.Result)
 	req := requestPool.Get().(*request)
 	req.createTime = fasttime.Now()
 	req._startTime = time.Time{}
@@ -129,7 +132,7 @@ func TestRequestStatus(t *testing.T) {
 		t.Error("endtime should be _endtime after finish()")
 	}
 
-	httpstatResultPool.Put(req.statResult)
+	httpStatResultPool.Put(req.statResult)
 	requestPool.Put(req)
 }
 
@@ -153,7 +156,7 @@ func TestAddB3PropagationHeaders(t *testing.T) {
 
 	p := pool{}
 	sr := strings.NewReader("this is the raw body")
-	req, _ := p.newRequest(ctx, &server, sr, requestPool, httpstatResultPool)
+	req, _ := p.newRequest(ctx, &server, sr, requestPool, httpStatResultPool)
 	defer requestPool.Put(req) // recycle request
 
 	header := req.std.Header
