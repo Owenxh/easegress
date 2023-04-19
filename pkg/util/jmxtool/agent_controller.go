@@ -22,15 +22,14 @@ import (
 	"fmt"
 	"net/http"
 
-	yamljsontool "github.com/ghodss/yaml"
-	"gopkg.in/yaml.v2"
-
 	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/spec"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const (
 	agentConfigURL = "/config"
+	agentInfoURL   = "/agent-info"
 )
 
 type (
@@ -47,49 +46,48 @@ type (
 
 	// AgentConfig is the config pushed to agent.
 	AgentConfig struct {
-		spec.Service `yaml:",inline"`
+		spec.Service `json:",inline"`
 
-		Headers  string         `yaml:"easeagent.progress.forwarded.headers"`
-		Reporter *AgentReporter `yaml:"reporter.outputServer"`
+		Headers  string         `json:"easeagent.progress.forwarded.headers"`
+		Reporter *AgentReporter `json:"reporter.outputServer"`
 	}
 
 	// AgentReporter is the basic config for agent reporter.
 	AgentReporter struct {
-		ReporterTLS *AgentReporterTLS `yaml:"tls"`
+		ReporterTLS *AgentReporterTLS `json:"tls"`
 
-		AppendType      string `yaml:"appendType"`
-		BootstrapServer string `yaml:"bootstrapServer"`
-		Username        string `yaml:"username"`
-		Password        string `yaml:"password"`
+		AppendType      string `json:"appendType"`
+		BootstrapServer string `json:"bootstrapServer"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
 	}
 
 	// AgentReporterTLS is the TLS config for agent resporter.
 	AgentReporterTLS struct {
-		Enable bool   `yaml:"enable"`
-		Key    string `yaml:"key"`
-		Cert   string `yaml:"cert"`
-		CACert string `yaml:"ca_cert"`
+		Enable bool   `json:"enable"`
+		Key    string `json:"key"`
+		Cert   string `json:"cert"`
+		CACert string `json:"ca_cert"`
+	}
+
+	// AgentInfo stores agent information.
+	AgentInfo struct {
+		Type    string `json:"type"`
+		Version string `json:"version"`
 	}
 )
 
-func newAgentConfig() {
-}
-
 func (ac *AgentConfig) marshal() ([]byte, error) {
-	yamlBuff, err := yaml.Marshal(ac)
+	jsonBuff, err := codectool.MarshalJSON(ac)
 	if err != nil {
-		return nil, fmt.Errorf("marshal %#v to yaml failed: %v", ac, err)
+		return nil, fmt.Errorf("marshal %#v to json failed: %v", ac, err)
 	}
-	jsonBytes, err := yamljsontool.YAMLToJSON(yamlBuff)
-	if err != nil {
-		return nil, fmt.Errorf("convert yaml %s to json failed: %v", yamlBuff, err)
-	}
-	kvMap, err := JSONToKVMap(string(jsonBytes))
+	kvMap, err := JSONToKVMap(string(jsonBuff))
 	if err != nil {
 		return nil, fmt.Errorf("json to kv failed: %v", err)
 	}
 
-	result, err := json.Marshal(kvMap)
+	result, err := codectool.MarshalJSON(kvMap)
 	if err != nil {
 		return nil, fmt.Errorf("marshal %s to json failed: %v", kvMap, err)
 	}
@@ -100,9 +98,26 @@ func (ac *AgentConfig) marshal() ([]byte, error) {
 // NewAgentClient creates the agent client
 func NewAgentClient(host, port string) *AgentClient {
 	return &AgentClient{
-		"http://" + host + ":" + port,
-		&http.Client{},
+		URL:        "http://" + host + ":" + port,
+		HTTPClient: &http.Client{},
 	}
+}
+
+// GetAgentInfo gets the information of the agent.
+func (agent *AgentClient) GetAgentInfo() (*AgentInfo, error) {
+	url := agent.URL + agentInfoURL
+	bodyString, err := handleRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("handleRequest failed: %v", err)
+	}
+
+	info := &AgentInfo{}
+	err = json.Unmarshal([]byte(bodyString), info)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal %s to json failed: %v", bodyString, err)
+	}
+
+	return info, nil
 }
 
 // UpdateAgentConfig updates agent config.

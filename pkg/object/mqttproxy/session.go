@@ -20,24 +20,27 @@ package mqttproxy
 import (
 	"encoding/base64"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"gopkg.in/yaml.v2"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/megaease/easegress/pkg/logger"
+	"github.com/megaease/easegress/pkg/util/codectool"
+
 	"github.com/openzipkin/zipkin-go/model"
 )
+
+const defaultRetryInterval = 30 * time.Second
 
 type (
 	// SessionInfo is info about session that will be put into etcd for persistency
 	SessionInfo struct {
 		// map subscribe topic to qos
-		EGName    string         `yaml:"egName"`
-		Name      string         `yaml:"name"`
-		Topics    map[string]int `yaml:"topics"`
-		ClientID  string         `yaml:"clientID"`
-		CleanFlag bool           `yaml:"cleanFlag"`
+		EGName    string         `json:"egName"`
+		Name      string         `json:"name"`
+		Topics    map[string]int `json:"topics"`
+		ClientID  string         `json:"clientID"`
+		CleanFlag bool           `json:"cleanFlag"`
 	}
 
 	// Session includes the information about the connect between client and broker,
@@ -51,13 +54,16 @@ type (
 		pending      map[uint16]*Message
 		pendingQueue []uint16
 		nextID       uint16
+		// retry Qos1 packet
+		retryInterval time.Duration
+		refreshStore  atomic.Value
 	}
 
 	// Message is the message send from broker to client
 	Message struct {
-		Topic      string `yaml:"topic"`
-		B64Payload string `yaml:"b64Payload"`
-		QoS        int    `yaml:"qos"`
+		Topic      string `json:"topic"`
+		B64Payload string `json:"b64Payload"`
+		QoS        int    `json:"qos"`
 	}
 )
 
@@ -71,23 +77,43 @@ func newMsg(topic string, payload []byte, qos byte) *Message {
 }
 
 func (s *Session) store() {
-	logger.SpanDebugf(nil, "session %v store", s.info.ClientID)
-	str, err := s.encode()
-	if err != nil {
-		logger.SpanErrorf(nil, "encode session %+v failed: %v", s, err)
+	if swapped := s.refreshStore.CompareAndSwap(true, false); !swapped {
 		return
 	}
-	ss := SessionStore{
-		key:   s.info.ClientID,
-		value: str,
-	}
-	go func() {
-		s.storeCh <- ss
+
+	ss := func() *SessionStore {
+		s.Lock()
+		str, err := s.encode()
+		s.Unlock()
+		if err != nil {
+			logger.Errorf("encode session %+v failed: %v", s, err)
+			return nil
+		}
+
+		return &SessionStore{
+			key:   s.info.ClientID,
+			value: str,
+		}
 	}()
+	if ss == nil {
+		return
+	}
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	select {
+	case s.storeCh <- *ss:
+		logger.Infof("session: %s  store:%s", s.info.ClientID, ss.value)
+		return
+	case <-ticker.C:
+		logger.Infof("session: %s  store:%s, timeout", s.info.ClientID, ss.value)
+		s.refreshStore.Store(true)
+		return
+	}
 }
 
 func (s *Session) encode() (string, error) {
-	b, err := yaml.Marshal(s.info)
+	b, err := codectool.MarshalJSON(s.info)
 	if err != nil {
 		return "", err
 	}
@@ -95,7 +121,10 @@ func (s *Session) encode() (string, error) {
 }
 
 func (s *Session) decode(str string) error {
-	return yaml.Unmarshal([]byte(str), s.info)
+	if s.info == nil {
+		s.info = &SessionInfo{}
+	}
+	return codectool.UnmarshalJSON([]byte(str), s.info)
 }
 
 func (s *Session) init(sm *SessionManager, b *Broker, connect *packets.ConnectPacket) error {
@@ -104,6 +133,7 @@ func (s *Session) init(sm *SessionManager, b *Broker, connect *packets.ConnectPa
 	s.done = make(chan struct{})
 	s.pending = make(map[uint16]*Message)
 	s.pendingQueue = []uint16{}
+	s.retryInterval = time.Second * time.Duration(b.spec.RetryInterval)
 
 	s.info = &SessionInfo{}
 	s.info.EGName = b.egName
@@ -118,7 +148,8 @@ func (s *Session) updateEGName(egName, name string) {
 	s.Lock()
 	s.info.EGName = egName
 	s.info.Name = name
-	s.store()
+	// s.store()
+	s.refreshStore.Store(true)
 	s.Unlock()
 }
 
@@ -128,7 +159,8 @@ func (s *Session) subscribe(topics []string, qoss []byte) error {
 	for i, t := range topics {
 		s.info.Topics[t] = int(qoss[i])
 	}
-	s.store()
+	// s.store()
+	s.refreshStore.Store(true)
 	s.Unlock()
 	return nil
 }
@@ -139,7 +171,8 @@ func (s *Session) unsubscribe(topics []string) error {
 	for _, t := range topics {
 		delete(s.info.Topics, t)
 	}
-	s.store()
+	// s.store()
+	s.refreshStore.Store(true)
 	s.Unlock()
 	return nil
 }
@@ -243,9 +276,17 @@ func (s *Session) doResend() {
 	}
 }
 
-func (s *Session) backgroundResendPending() {
+// backgroundSessionTask process two tasks peroidly:
+// - task 1: sync the session information to global etcd store
+// - task 2: resend the packet to the subscriber with QoS 1 or 2
+func (s *Session) backgroundSessionTask() {
+	if s.retryInterval <= 0 {
+		logger.Warnf("invalid s.retryInterval :%d, mandatory setting to 30s", s.retryInterval)
+		s.retryInterval = defaultRetryInterval
+	}
+	resendTime := time.Now().Add(s.retryInterval)
 	debugLogTime := time.Now().Add(time.Minute)
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -253,7 +294,11 @@ func (s *Session) backgroundResendPending() {
 		case <-s.done:
 			return
 		case <-ticker.C:
-			s.doResend()
+			s.store()
+			if time.Now().After(resendTime) {
+				s.doResend()
+				resendTime = time.Now().Add(s.retryInterval)
+			}
 		}
 		if time.Now().After(debugLogTime) {
 			logger.SpanDebugf(nil, "session %v resend", s.info.ClientID)

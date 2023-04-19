@@ -18,7 +18,6 @@
 package mqttproxy
 
 import (
-	stdcontext "context"
 	"errors"
 	"net"
 	"reflect"
@@ -29,7 +28,7 @@ import (
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/megaease/easegress/pkg/context"
 	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/pipeline"
+	"github.com/megaease/easegress/pkg/protocols/mqttprot"
 )
 
 const (
@@ -102,7 +101,7 @@ type (
 	}
 )
 
-var _ context.MQTTClient = (*Client)(nil)
+var _ mqttprot.Client = (*Client)(nil)
 
 // ClientID return client id of Client
 func (c *Client) ClientID() string {
@@ -222,19 +221,20 @@ func (c *Client) runPipeline(packet packets.ControlPacket, packetType PacketType
 		return nil
 	}
 
-	pipe, err := pipeline.GetPipeline(pipelineName, context.MQTT)
-	if err != nil {
-		logger.SpanErrorf(nil, "get pipeline %v failed, %v", pipelineName, err)
+	pipe, ok := c.broker.muxMapper.GetHandler(pipelineName)
+	if !ok {
+		logger.SpanErrorf(nil, "get pipeline %v failed", pipelineName)
 		return nil
 	}
 
-	ctx := context.NewMQTTContext(stdcontext.Background(), c, packet)
-	pipe.HandleMQTT(ctx)
-	if ctx.Disconnect() {
+	ctx := newContext(packet, c)
+	pipe.Handle(ctx)
+	resp := ctx.GetResponse(context.DefaultNamespace).(*mqttprot.Response)
+	if resp.Disconnect() {
 		c.close()
 		return errors.New("pipeline set disconnect")
 	}
-	if ctx.Drop() {
+	if resp.Drop() {
 		return errors.New("pipeline set drop")
 	}
 	return nil
@@ -268,6 +268,7 @@ func (c *Client) close() {
 	logger.SpanDebugf(nil, "client %v connection close", c.info.cid)
 	atomic.StoreInt32(&c.statusFlag, Disconnected)
 	close(c.done)
+	c.conn.SetReadDeadline(time.Now().Add(time.Second))
 	c.Unlock()
 
 	// pipeline
@@ -275,13 +276,13 @@ func (c *Client) close() {
 	if !ok {
 		return
 	}
-	pipe, err := pipeline.GetPipeline(pipelineName, context.MQTT)
-	if err != nil {
-		logger.SpanErrorf(nil, "get pipeline %v failed, %v", pipelineName, err)
+	pipe, ok := c.broker.muxMapper.GetHandler(pipelineName)
+	if !ok {
+		logger.SpanErrorf(nil, "get pipeline %v failed", pipelineName)
 	} else {
 		disconnect := packets.NewControlPacket(packets.Disconnect).(*packets.DisconnectPacket)
-		ctx := context.NewMQTTContext(stdcontext.Background(), c, disconnect)
-		pipe.HandleMQTT(ctx)
+		ctx := newContext(disconnect, c)
+		pipe.Handle(ctx)
 	}
 }
 
@@ -290,14 +291,18 @@ func (c *Client) disconnected() bool {
 }
 
 func (c *Client) closeAndDelSession() {
-	c.broker.sessMgr.delLocal(c.info.cid)
-	if c.session.cleanSession() {
+	// session can be delete by kickOUt or closeAndDelSession
+	// only when session was delete by closeAndDelSession we should clean
+	// global store, otherwise it means that the device reconnect to
+	// the another broker, the current broker just disconnect connection.
+	// and clean local session information.
+	deleted := c.broker.sessMgr.delLocal(c.info.cid)
+	if c.session.cleanSession() && deleted {
 		c.broker.sessMgr.delDB(c.info.cid)
 	}
 
 	topics, _, _ := c.session.allSubscribes()
 	c.broker.topicMgr.unsubscribe(topics, c.info.cid)
-
 	c.close()
 }
 
@@ -328,6 +333,7 @@ func pipelineWrapper(fn processFn, packetType PacketType) processFnWithErr {
 
 func processPublish(c *Client, packet packets.ControlPacket) {
 	publish := packet.(*packets.PublishPacket)
+	go c.broker.processBrokerModePublish(c.info.cid, publish)
 	switch publish.Qos {
 	case QoS0:
 		// do nothing
@@ -384,4 +390,30 @@ func processUnsubscribe(c *Client, p packets.ControlPacket) {
 func processPingreq(c *Client, packet packets.ControlPacket) {
 	resp := packets.NewControlPacket(packets.Pingresp).(*packets.PingrespPacket)
 	c.writePacket(resp)
+}
+
+// kickOUt kick out the connection of the client,
+// it will recycle the session, unsbuscribe topic of the client.
+// **IMPORT:**
+// - DO NOT SCHEDULE THE DISCONNECT PIPELINE.
+// - DO NOT CLEAN SESSION INFO IN THE GLOBAL STORE.
+// So in the kickOUt, we don't call Client::close
+func (c *Client) kickOut() {
+	// clean local session information, unsubscribe topic
+	// in the current broker
+	c.sessionCleanLocal()
+
+	// close connection, but don't schedule Disconnect Pipeline
+	c.Lock()
+	defer c.Unlock()
+	// Change the client status to Disconnected
+	atomic.StoreInt32(&c.statusFlag, Disconnected)
+	close(c.done)
+	c.conn.Close()
+}
+
+func (c *Client) sessionCleanLocal() {
+	c.broker.sessMgr.delLocal(c.info.cid)
+	topics, _, _ := c.session.allSubscribes()
+	c.broker.topicMgr.unsubscribe(topics, c.info.cid)
 }

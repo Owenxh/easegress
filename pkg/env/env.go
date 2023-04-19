@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package env provides functions for environment variables.
 package env
 
 import (
@@ -42,9 +43,11 @@ func InitServerDir(opt *option.Options) error {
 		}
 	}
 
-	err = common.MkdirAll(opt.AbsLogDir)
-	if err != nil {
-		return err
+	if opt.AbsLogDir != "" {
+		err = common.MkdirAll(opt.AbsLogDir)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = common.MkdirAll(opt.AbsMemberDir)
@@ -62,7 +65,9 @@ func CleanServerDir(opt *option.Options) {
 	if opt.AbsWALDir != "" {
 		common.RemoveAll(opt.AbsWALDir)
 	}
+	if opt.AbsLogDir != "" {
+		common.RemoveAll(opt.AbsLogDir)
+	}
 	common.RemoveAll(opt.AbsMemberDir)
-	common.RemoveAll(opt.AbsLogDir)
 	common.RemoveAll(opt.AbsHomeDir)
 }

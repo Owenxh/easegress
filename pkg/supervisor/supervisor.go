@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package supervisor implements the supervisor of all objects.
 package supervisor
 
 import (
@@ -54,9 +55,7 @@ type (
 	WalkFunc func(entity *ObjectEntity) bool
 )
 
-var (
-	globalSuper *Supervisor
-)
+var globalSuper *Supervisor
 
 func loadInitialObjects(s *Supervisor, paths []string) map[string]string {
 	objs := map[string]string{}
@@ -71,7 +70,7 @@ func loadInitialObjects(s *Supervisor, paths []string) map[string]string {
 			logger.Errorf("failed to create spec for initial object, path: %s, error: %v", path, e)
 			continue
 		}
-		objs[spec.Name()] = spec.YAMLConfig()
+		objs[spec.Name()] = spec.JSONConfig()
 	}
 	return objs
 }
@@ -89,7 +88,7 @@ func MustNew(opt *option.Options, cls cluster.Cluster) *Supervisor {
 
 	initObjs := loadInitialObjects(s, opt.InitialObjectConfigFiles)
 
-	s.objectRegistry = newObjectRegistry(s, initObjs)
+	s.objectRegistry = newObjectRegistry(s, initObjs, opt.ObjectsDumpInterval)
 	s.watcher = s.objectRegistry.NewWatcher(watcherName, FilterCategory(
 		// NOTE: SystemController is only initialized internally.
 		// CategorySystemController,

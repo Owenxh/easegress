@@ -10,13 +10,13 @@ MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 MKFILE_DIR := $(dir $(MKFILE_PATH))
 RELEASE_DIR := ${MKFILE_DIR}bin
 GO_PATH := $(shell go env | grep GOPATH | awk -F '"' '{print $$2}')
-HTTPSERVER_TEST_PATH := build/test
+INTEGRATION_TEST_PATH := build/test
 
 # Image Name
 IMAGE_NAME?=megaease/easegress
 
 # Version
-RELEASE?=v1.5.2
+RELEASE?=v2.4.0
 
 # Git Related
 GIT_REPO_INFO=$(shell cd ${MKFILE_DIR} && git config --get remote.origin.url)
@@ -90,8 +90,8 @@ build_docker:
 	docker run -w /egsrc -u ${shell id -u}:${shell id -g} --rm \
 	-v ${GO_PATH}:/gopath -v ${MKFILE_DIR}:/egsrc -v ${MKFILE_DIR}build/cache:/gocache \
 	-e GOPROXY=https://goproxy.io,direct -e GOCACHE=/gocache -e GOPATH=/gopath \
-	megaease/golang:1.18-alpine make build DOCKER=true
-	docker build -t ${IMAGE_NAME}:${RELEASE} -f ./build/package/Dockerfile .
+	megaease/golang:1.20-alpine make build DOCKER=true
+	docker buildx build --platform linux/amd64 --load -t ${IMAGE_NAME}:${RELEASE} -f ./build/package/Dockerfile .
 	docker tag ${IMAGE_NAME}:${RELEASE} ${IMAGE_NAME}:latest
 	docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:server-sidecar
 	docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:easemesh
@@ -101,13 +101,14 @@ test:
 	go mod tidy
 	git diff --exit-code go.mod go.sum
 	go mod verify
-	go test -v ./... ${TEST_FLAGS}
+	go test -v -gcflags "all=-l" ${MKFILE_DIR}pkg/... ${TEST_FLAGS}
 
-httpserver_test: build
+integration_test: build
 	{ \
 	set -e ;\
-	cd ${HTTPSERVER_TEST_PATH} ;\
-	./httpserver_test.sh ;\
+	cd ${INTEGRATION_TEST_PATH} ;\
+	./test.sh ;\
+	./clean.sh ;\
     }
 
 clean:

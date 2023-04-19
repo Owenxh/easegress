@@ -54,9 +54,9 @@ type (
 
 	// Entry is the entry of API.
 	Entry struct {
-		Path    string           `yaml:"path"`
-		Method  string           `yaml:"method"`
-		Handler http.HandlerFunc `yaml:"-"`
+		Path    string           `json:"path"`
+		Method  string           `json:"method"`
+		Handler http.HandlerFunc `json:"-"`
 	}
 )
 
@@ -80,12 +80,20 @@ func MustNewServer(opt *option.Options, cls cluster.Cluster, super *supervisor.S
 	dataPrefix := cls.Layout().CustomDataPrefix()
 	s.cds = customdata.NewStore(cls, kindPrefix, dataPrefix)
 
-	s.initMetadata()
 	s.registerAPIs()
 
 	go func() {
-		logger.Infof("api server running in %s", opt.APIAddr)
-		s.server.ListenAndServe()
+		var err error
+		if s.opt.TLS {
+			logger.Infof("api server (https) running in %s", opt.APIAddr)
+			err = s.server.ListenAndServeTLS(s.opt.CertFile, s.opt.KeyFile)
+		} else {
+			logger.Infof("api server running in %s", opt.APIAddr)
+			err = s.server.ListenAndServe()
+		}
+		if err != nil {
+			logger.Errorf("start api server failed: %v", err)
+		}
 	}()
 
 	return s

@@ -1,7 +1,159 @@
 # Changelog
 
+## [v2.4.0](https://github.com/megaease/easegress/tree/v2.4.0) (2023-03-03)
 
-## [v1.5.2](https://github.com/megaease/easegress/tree/v1.5.2) (2022-04-06)
+[Full Changelog](https://github.com/megaease/easegress/compare/v2.3.1...v2.4.0)
+
+**Significant changes:**
+* Support GRPC protocol.
+
+**Implemented enhancements:**
+* Enhancement to access log.
+* Enlarge charset allowed in object names.
+* Enhance tracing to support Cloudflare.
+* RequestAdaptor and ResponseAdaptor support template.
+
+**Fixed bugs:**
+* WASM apply data command not working.
+* install.sh not work as expectation on some platforms.
+* Fix typo and other minor problems in the documentation. 
+
+
+## [v2.3.1](https://github.com/megaease/easegress/tree/v2.3.1) (2022-12-28)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v2.3.0...v2.3.1)
+
+**Significant changes:**
+* Support OpenTelemetry for tracing.
+* Add new filter Redirector to handle HTTP 3xx redirects.
+* Add prometheus support for Proxy and HTTPServer.
+
+**Implemented enhancements:**
+* Add LDAP mode for basic authentication.
+* Add Broker mode for MQTTProxy.
+* Support HTTPS for egctl and easegress-server.
+* Enhance egctl delete.
+
+## [v2.3.0](https://github.com/megaease/easegress/tree/v2.3.0) (2022-11-28)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v2.2.0...v2.3.0)
+
+**Significant changes:**
+* HTTPServer: support radix tree router and routing by client IP.
+* Add new filter OPAFilter for Open Policy Agent.
+
+**Implemented enhancements:**
+* Load Balance: support session and server health check.
+* Making running objects dump interval configurable.
+* Simplify CORSAdaptor.
+
+**Fixed bugs:**
+* Fix unexpected EOF when compression is enabled.
+* Remove duplicated code in codectool.
+* Update keyfunc for compatibility and bug fixes.
+* Fix mqtt test random fail.
+
+
+## [v2.2.0](https://github.com/megaease/easegress/tree/v2.2.0) (2022-10-18)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v2.1.1...v2.2.0)
+
+**Significant changes:**
+* Add new filter WebSocketProxy and remove controller WebSocketServer.
+* Add new filter OIDCAdaptor for OpenID Connect 1.0 authorization.
+* Add new filter DataBuilder.
+
+**Implemented enhancements:**
+* Support routing by query string.
+* Update wasmtime-go.
+* Add more signing algorithm for JWT validator.
+* Support websocket for ingress controller.
+
+**Fixed bugs:**
+* Fix cluster test random fail.
+* Fix EaseMonitorMetrics status error.
+* Fix GlobalFilter jsonschema validator error.
+
+## [v2.1.1](https://github.com/megaease/easegress/tree/v2.1.1) (2022-09-09)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v2.1.0...v2.1.1)
+
+
+**Implemented enhancements:**
+
+* Add ResultBuilder filter
+* Speed up DNS01 challenge
+* Add EaseTranslateBot example (code-free workflow by using Easegress pipeline)
+* Speed up MQTTProxy client connection
+* Check Kubernetes version for ingress controller
+
+**Fixed bugs:**
+* Fix default logger bug
+* Fix HTTP runtime ticker bug
+* Fix ingress translation error 
+
+
+## [v2.1.0](https://github.com/megaease/easegress/tree/v2.1.0) (2022-08-09)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v2.0.0...v2.1.0)
+
+**Significant changes:**
+
+* Define user data in pipeline spec.
+* `jumpIf` support jumping on an empty result.
+* Bump API version to v2 (v1 APIs are kept for compatibility).
+
+**Implemented enhancements:**
+
+* RequestAdaptor support signing the request (experimental).
+* RequestBuilder support form data (HTTP only).
+* Add `disableReport` option to tracing.
+* Logs go to stdout/stderr by default.
+
+**Fixed bugs:**
+
+* HTTPServer does not work as expected when match all header is enabled.
+* `jumpIf` not working with global filter.
+* Response headers set by filters before a Proxy are all lost.
+* Nacos registry doesn't work.
+* Panic in StatusSyncController.
+* MQTT client is not closed as expected.
+
+## [v2.0.0](https://github.com/megaease/easegress/tree/v2.0.0) (2022-07-07)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v1.5.3...v2.0.0)
+
+**Significant changes:**
+
+- Pipeline
+  * Pipeline is protocol-independent now.
+  * Add `RequestBuilder` filter, `ResponseBuilder` filter and built-in filter `END`.
+  * Add the support of `namespace`.
+  * Add the support of filter alias.
+  * Filter `Retryer`, `CircuitBreaker` and `TimeLimiter` are removed, resilience
+    policies are now defined on pipeline and injected into filters that support
+    resilience. 
+  * Filter `APIAggregator` is removed.
+
+**Implemented enhancements:**
+- Tracing is now using Zipkin B3 format.
+- Cluster
+  * Drop the support of dynamic cluster management.
+  * Depreciated configuration method is removed.
+
+## [v1.5.3](https://github.com/megaease/easegress/tree/v1.5.3) (2022-06-28)
+
+[Full Changelog](https://github.com/megaease/easegress/compare/v1.5.2...v1.5.3)
+
+**Implemented enhancements:**
+- Remove HTTP hop headers [\#650](https://github.com/megaease/easegress/pull/650)
+- Optimize Kubernetes IngressController rule route policy [\#651](https://github.com/megaease/easegress/pull/651)
+
+**Fixed bugs:**
+- Wrong HTTP request scheme if the `X-Forwarded-Proto` header contains two or more items[\#634](https://github.com/megaease/easegress/pull/634)
+- Fix request "Content-Length" header missing bug [\#649](https://github.com/megaease/easegress/pull/649)
+
+## [v1.5.2](https://github.com/megaease/easegress/tree/v1.5.2) (2022-05-10)
 
 [Full Changelog](https://github.com/megaease/easegress/compare/v1.5.1...v1.5.2)
 

@@ -56,7 +56,8 @@ type (
 
 // NewIngressServer creates an initialized ingress server
 func NewIngressServer(superSpec *supervisor.Spec, super *supervisor.Supervisor,
-	serviceName, instaceID string, service *service.Service) *IngressServer {
+	serviceName, instaceID string, service *service.Service,
+) *IngressServer {
 	entity, exists := super.GetSystemController(trafficcontroller.Kind)
 	if !exists {
 		panic(fmt.Errorf("BUG: traffic controller not found"))
@@ -74,7 +75,7 @@ func NewIngressServer(superSpec *supervisor.Spec, super *supervisor.Supervisor,
 		superSpec: superSpec,
 
 		tc:        tc,
-		namespace: fmt.Sprintf("%s/%s", superSpec.Name(), "ingress"),
+		namespace: superSpec.Name(),
 
 		pipelines:   make(map[string]*supervisor.ObjectEntity),
 		httpServer:  nil,
@@ -116,7 +117,7 @@ func (ings *IngressServer) InitIngress(service *spec.Service, port uint32) error
 		if err != nil {
 			return err
 		}
-		entity, err := ings.tc.CreateHTTPPipelineForSpec(ings.namespace, superSpec)
+		entity, err := ings.tc.CreatePipelineForSpec(ings.namespace, superSpec)
 		if err != nil {
 			return fmt.Errorf("create http pipeline %s failed: %v", superSpec.Name(), err)
 		}
@@ -132,12 +133,13 @@ func (ings *IngressServer) InitIngress(service *spec.Service, port uint32) error
 			logger.Infof("ingress enable TLS, init httpserver with cert: %#v", cert)
 		}
 
-		superSpec, err := service.SidecarIngressHTTPServerSpec(admSpec.WorkerSpec.Ingress.KeepAlive, admSpec.WorkerSpec.Ingress.KeepAliveTimeout, cert, rootCert)
+		superSpec, err := service.SidecarIngressHTTPServerSpec(admSpec.WorkerSpec.Ingress.KeepAlive,
+			admSpec.WorkerSpec.Ingress.KeepAliveTimeout, cert, rootCert)
 		if err != nil {
 			return err
 		}
 
-		entity, err := ings.tc.CreateHTTPServerForSpec(ings.namespace, superSpec)
+		entity, err := ings.tc.CreateTrafficGateForSpec(ings.namespace, superSpec)
 		if err != nil {
 			return fmt.Errorf("create http server %s failed: %v", superSpec.Name(), err)
 		}
@@ -184,11 +186,11 @@ func (ings *IngressServer) reloadHTTPServer(event informer.Event, value *spec.Ce
 	superSpec, err := serviceSpec.SidecarIngressHTTPServerSpec(admSpec.WorkerSpec.Ingress.KeepAlive, admSpec.WorkerSpec.Ingress.KeepAliveTimeout, value, rootCert)
 	if err != nil {
 		logger.Errorf("BUG: update ingress pipeline spec: %s new super spec failed: %v",
-			superSpec.YAMLConfig(), err)
+			superSpec.JSONConfig(), err)
 		return true
 	}
 
-	entity, err := ings.tc.UpdateHTTPServerForSpec(ings.namespace, superSpec)
+	entity, err := ings.tc.UpdateTrafficGateForSpec(ings.namespace, superSpec)
 	if err != nil {
 		logger.Errorf("update http server %s failed: %v", ings.serviceName, err)
 		return true
@@ -212,11 +214,11 @@ func (ings *IngressServer) reloadPipeline(event informer.Event, serviceSpec *spe
 	superSpec, err := serviceSpec.SidecarIngressPipelineSpec(ings.applicationPort)
 	if err != nil {
 		logger.Errorf("BUG: update ingress pipeline spec: %s new super spec failed: %v",
-			superSpec.YAMLConfig(), err)
+			superSpec.JSONConfig(), err)
 		return true
 	}
 
-	entity, err := ings.tc.UpdateHTTPPipelineForSpec(ings.namespace, superSpec)
+	entity, err := ings.tc.UpdatePipelineForSpec(ings.namespace, superSpec)
 	if err != nil {
 		return true
 	}
@@ -233,9 +235,9 @@ func (ings *IngressServer) Close() {
 	ings.inf.Close()
 
 	if ings._ready() {
-		ings.tc.DeleteHTTPServer(ings.namespace, ings.httpServer.Spec().Name())
+		ings.tc.DeleteTrafficGate(ings.namespace, ings.httpServer.Spec().Name())
 		for _, entity := range ings.pipelines {
-			ings.tc.DeleteHTTPPipeline(ings.namespace, entity.Spec().Name())
+			ings.tc.DeletePipeline(ings.namespace, entity.Spec().Name())
 		}
 	}
 }

@@ -44,7 +44,7 @@ var (
 		"url":              _url,
 	}
 
-	urlCharsRegexp = regexp.MustCompile(`^[A-Za-z0-9\-_\.~]{1,253}$`)
+	urlCharsRegexp = regexp.MustCompile(`^[\p{L}0-9\-_\.~]{1,253}$`)
 )
 
 func getFormatFunc(format string) (FormatFunc, bool) {
@@ -74,7 +74,7 @@ func urlName(v interface{}) error {
 		return nil
 	}
 
-	return fmt.Errorf("invalid name format")
+	return fmt.Errorf("invalid name format: %s", v)
 }
 
 func httpMethod(v interface{}) error {

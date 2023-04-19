@@ -15,18 +15,22 @@
  * limitations under the License.
  */
 
+// Package api provides the API for mesh controller.
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/megaease/easegress/pkg/api"
+	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/service"
 	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/pkg/util/codectool"
+	"github.com/megaease/easegress/pkg/util/k8s"
 	"github.com/megaease/easegress/pkg/v"
+	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -51,8 +55,8 @@ const (
 	// MeshServicePath is the mesh service path.
 	MeshServicePath = "/mesh/services/{serviceName}"
 
-	// OldMeshServiceCanaryPath is the mesh service canary path.
-	OldMeshServiceCanaryPath = "/mesh/services/{serviceName}/canary"
+	// MeshServiceDeploySpecPath is the mesh service deployment spec path.
+	MeshServiceDeploySpecPath = "/mesh/services/{serviceName}/deployment"
 
 	// MeshServiceMockPath is the mesh service mock path.
 	MeshServiceMockPath = "/mesh/services/{serviceName}/mock"
@@ -118,7 +122,8 @@ const (
 type (
 	// API is the struct with the service
 	API struct {
-		service *service.Service
+		k8sClient *kubernetes.Clientset
+		service   *service.Service
 	}
 )
 
@@ -126,8 +131,14 @@ const apiGroupName = "mesh_admin"
 
 // New creates a API
 func New(superSpec *supervisor.Spec) *API {
+	k8sClient, err := k8s.NewK8sClientInCluster()
+	if err != nil {
+		logger.Errorf("new k8s client failed: %v", err)
+	}
+
 	api := &API{
-		service: service.New(superSpec),
+		service:   service.New(superSpec),
+		k8sClient: k8sClient,
 	}
 
 	api.registerAPIs()
@@ -162,14 +173,11 @@ func (a *API) registerAPIs() {
 
 			// TODO: API to get instances of one service.
 
+			{Path: MeshServiceDeploySpecPath, Method: "GET", Handler: a.getServiceDeployment},
+
 			{Path: MeshServiceInstancePrefix, Method: "GET", Handler: a.listServiceInstanceSpecs},
 			{Path: MeshServiceInstancePath, Method: "GET", Handler: a.getServiceInstanceSpec},
 			{Path: MeshServiceInstancePath, Method: "DELETE", Handler: a.offlineServiceInstance},
-
-			{Path: OldMeshServiceCanaryPath, Method: "POST", Handler: a.createPartOfService(canaryMeta)},
-			{Path: OldMeshServiceCanaryPath, Method: "GET", Handler: a.getPartOfService(canaryMeta)},
-			{Path: OldMeshServiceCanaryPath, Method: "PUT", Handler: a.updatePartOfService(canaryMeta)},
-			{Path: OldMeshServiceCanaryPath, Method: "DELETE", Handler: a.deletePartOfService(canaryMeta)},
 
 			{Path: MeshServiceMockPath, Method: "POST", Handler: a.createPartOfService(mockMeta)},
 			{Path: MeshServiceMockPath, Method: "GET", Handler: a.getPartOfService(mockMeta)},
@@ -240,12 +248,12 @@ func (a *API) registerAPIs() {
 }
 
 func (a *API) convertSpecToPB(spec interface{}, pbSpec interface{}) error {
-	buf, err := json.Marshal(spec)
+	buf, err := codectool.MarshalJSON(spec)
 	if err != nil {
 		return fmt.Errorf("marshal %#v to json failed: %v", spec, err)
 	}
 
-	err = json.Unmarshal(buf, pbSpec)
+	err = codectool.UnmarshalJSON(buf, pbSpec)
 	if err != nil {
 		return fmt.Errorf("unmarshal from json: %s failed: %v", string(buf), err)
 	}
@@ -254,12 +262,12 @@ func (a *API) convertSpecToPB(spec interface{}, pbSpec interface{}) error {
 }
 
 func (a *API) convertPBToSpec(pbSpec interface{}, spec interface{}) error {
-	buf, err := json.Marshal(pbSpec)
+	buff, err := codectool.MarshalJSON(pbSpec)
 	if err != nil {
 		return fmt.Errorf("marshal %#v to json: %v", pbSpec, err)
 	}
 
-	err = json.Unmarshal(buf, spec)
+	err = codectool.UnmarshalJSON(buff, spec)
 	if err != nil {
 		return fmt.Errorf("unmarshal %#v to spec: %v", spec, err)
 	}
@@ -275,7 +283,7 @@ func (a *API) readAPISpec(r *http.Request, pbSpec interface{}, spec interface{})
 		return fmt.Errorf("read body failed: %v", err)
 	}
 
-	err = json.Unmarshal(body, pbSpec)
+	err = codectool.UnmarshalJSON(body, pbSpec)
 	if err != nil {
 		return fmt.Errorf("unmarshal %s to pb spec %#v failed: %v", string(body), pbSpec, err)
 	}
@@ -291,4 +299,9 @@ func (a *API) readAPISpec(r *http.Request, pbSpec interface{}, spec interface{})
 	}
 
 	return nil
+}
+
+func (a *API) writeJSONBody(w http.ResponseWriter, buff []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(buff)
 }

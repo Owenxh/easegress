@@ -20,75 +20,110 @@ package cluster
 import (
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
+	"path"
+	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/phayes/freeport"
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/client/v3/concurrency"
 
 	"github.com/megaease/easegress/pkg/env"
+	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/option"
 	"github.com/stretchr/testify/assert"
 )
 
-func mockClusters(count int) []*cluster {
-	opts, _, _ := mockMembers(count)
+var tempDir = os.TempDir()
 
-	clusters := make([]*cluster, count)
+func getRandomString(n int) string {
+	randBytes := make([]byte, n/2)
+	rand.Read(randBytes)
+	return fmt.Sprintf("%x", randBytes)
+}
 
-	bootCluster, err := New(opts[0])
+func TestMain(m *testing.M) {
+	rand.Seed(time.Now().UnixNano())
+	logger.InitNop()
+	// logger.InitMock()
+	tempDir = path.Join(tempDir, getRandomString(6))
+	code := m.Run()
+	os.Exit(code)
+}
+
+func mockStaticClusterMembers(count int) ([]*option.Options, membersSlice, []*pb.Member) {
+	opts := make([]*option.Options, count)
+	members := make(membersSlice, count)
+	pbMembers := make([]*pb.Member, count)
+
+	portCount := (count * 2) + 1 // two for each member and one for egctl API.
+	ports, err := freeport.GetFreePorts(portCount)
 	if err != nil {
-		panic(fmt.Errorf("new cluster failed: %v", err))
+		panic(fmt.Errorf("get %d free ports failed: %v", portCount, err))
 	}
-	clusters[0] = bootCluster.(*cluster)
-
-	time.Sleep(HeartbeatInterval)
-
-	for i := 1; i < count; i++ {
-		opts[i].ClusterJoinURLs = opts[0].ClusterListenPeerURLs
-
-		cls, err := New(opts[i])
-
-		if err != nil {
-			totalRetryTime := time.After(60 * time.Second)
-		Loop:
-			for {
-				if err == nil {
-					break
-				}
-				select {
-				case <-totalRetryTime:
-					break Loop
-
-				case <-time.After(HeartbeatInterval):
-					cls, err = New(opts[i])
-				}
-			}
-
-		}
-		if err != nil {
-			panic(fmt.Errorf("new cluster failed: %v", err))
-		}
-
-		c := cls.(*cluster)
-
-		for {
-			_, err := c.getClient()
-			time.Sleep(HeartbeatInterval)
-			if err != nil {
-				continue
-			} else {
-				break
-			}
-		}
-
-		clusters[i] = c
+	initialCluster := make(map[string]string)
+	for i := 0; i < count; i++ {
+		name := fmt.Sprintf("static-cluster-test-member-%03d", i)
+		peerURL := fmt.Sprintf("http://localhost:%d", ports[(i*2)+1])
+		initialCluster[name] = peerURL
 	}
 
-	return clusters
+	for i := 0; i < count; i++ {
+		name := fmt.Sprintf("static-cluster-test-member-%03d", i)
+		opt := option.New()
+		opt.Name = name
+		opt.ClusterName = "test-static-sized-cluster"
+		opt.ClusterRole = "primary"
+		opt.ClusterRequestTimeout = "10s"
+		listenPort := ports[(i*2)+2]
+		advertisePort := ports[(i*2)+1]
+
+		opt.APIAddr = fmt.Sprintf("localhost:%d", ports[0])
+		opt.Cluster.ListenClientURLs = []string{fmt.Sprintf("http://localhost:%d", listenPort)}
+		opt.Cluster.AdvertiseClientURLs = opt.Cluster.ListenClientURLs
+		opt.Cluster.ListenPeerURLs = []string{fmt.Sprintf("http://localhost:%d", advertisePort)}
+		opt.Cluster.InitialAdvertisePeerURLs = opt.Cluster.ListenPeerURLs
+		opt.Cluster.InitialCluster = initialCluster
+		opt.HomeDir = filepath.Join(tempDir, name)
+		opt.DataDir = "data"
+		opt.LogDir = "log"
+		opt.MemberDir = "member"
+		opt.Debug = false
+		err = opt.Parse() // create directories
+		if err != nil {
+			panic(fmt.Errorf("parse option failed: %v", err))
+		}
+
+		id := uint64(i + 1)
+
+		opts[i] = opt
+		members[i] = &member{
+			ID:      id,
+			Name:    opt.Name,
+			PeerURL: opt.Cluster.InitialAdvertisePeerURLs[0],
+		}
+		pbMembers[i] = &pb.Member{
+			ID:         id,
+			Name:       opt.Name,
+			PeerURLs:   []string{opt.Cluster.InitialAdvertisePeerURLs[0]},
+			ClientURLs: []string{opt.Cluster.AdvertiseClientURLs[0]},
+		}
+		env.InitServerDir(opts[i])
+	}
+	sort.Sort(members)
+	noexistMember := members.getByPeerURL("no-exist")
+	if noexistMember != nil {
+		panic("get a member not exist succ, should failed")
+	}
+	members.deleteByName("no-exist")
+	members.deleteByPeerURL("no-exist-purl")
+	return opts, members, pbMembers
 }
 
 func mockStaticCluster(count int) []*cluster {
@@ -140,7 +175,7 @@ func closeClusters(clusters []*cluster) {
 func createSecondaryNode(clusterName string, primaryListenPeerURLs []string) *cluster {
 	ports, err := freeport.GetFreePorts(1)
 	check(err)
-	name := fmt.Sprintf("secondary-member-x")
+	name := "secondary-member-x"
 	opt := option.New()
 	opt.Name = name
 	opt.ClusterName = clusterName
@@ -149,7 +184,7 @@ func createSecondaryNode(clusterName string, primaryListenPeerURLs []string) *cl
 	opt.Cluster.PrimaryListenPeerURLs = primaryListenPeerURLs
 	opt.APIAddr = fmt.Sprintf("localhost:%d", ports[0])
 
-	_, err = opt.Parse()
+	err = opt.Parse()
 	check(err)
 
 	env.InitServerDir(opt)
@@ -160,20 +195,12 @@ func createSecondaryNode(clusterName string, primaryListenPeerURLs []string) *cl
 }
 
 func TestCluster(t *testing.T) {
-	t.Run("start cluster dynamically", func(t *testing.T) {
-		clusters := mockClusters(3)
-		defer closeClusters(clusters)
-		// for testing longRequestContext()
-		clusters[0].longRequestContext()
-	})
-	t.Run("start static sized cluster", func(t *testing.T) {
-		clusterNodes := mockStaticCluster(3)
-		primaryName := clusterNodes[0].opt.ClusterName
-		primaryAddress := clusterNodes[0].opt.Cluster.InitialAdvertisePeerURLs
-		secondaryNode := createSecondaryNode(primaryName, primaryAddress)
-		defer closeClusters(clusterNodes)
-		defer closeClusters([]*cluster{secondaryNode})
-	})
+	clusterNodes := mockStaticCluster(3)
+	primaryName := clusterNodes[0].opt.ClusterName
+	primaryAddress := clusterNodes[0].opt.Cluster.InitialAdvertisePeerURLs
+	secondaryNode := createSecondaryNode(primaryName, primaryAddress)
+	defer closeClusters(clusterNodes)
+	defer closeClusters([]*cluster{secondaryNode})
 }
 
 func TestLease(t *testing.T) {
@@ -202,26 +229,26 @@ func TestClusterStart(t *testing.T) {
 	c := cls.(*cluster)
 
 	_, _, err = c.StartServer()
-
 	if err != nil {
 		t.Errorf("start server failed, %v", err)
 	}
 }
 
 func TestClusterPurgeMember(t *testing.T) {
+	assert := assert.New(t)
 	opts, _, _ := mockMembers(2)
 
-	cls, err := New(opts[0])
+	go func() {
+		_, err := New(opts[1])
+		assert.Nil(err)
+	}()
 
-	if err != nil {
-		t.Errorf("init failed: %v", err)
-	}
+	cls, err := New(opts[0])
+	assert.Nil(err)
 
 	c := cls.(*cluster)
 	err = c.PurgeMember("no-member")
-	if err == nil {
-		t.Errorf("purge a none exit member, should be failed")
-	}
+	assert.NotNil(err)
 }
 
 func TestClusterSyncer(t *testing.T) {
@@ -574,11 +601,11 @@ func TestRunDefrag(t *testing.T) {
 	cluster.initLayout()
 	cluster.run()
 
-	assert.Equal(cluster.runDefrag(), defragNormalInterval)
+	assert.Equal(defragNormalInterval, cluster.runDefrag())
 	cluster.opt.Cluster.AdvertiseClientURLs[0] = "wrong-urlll"
-	assert.Equal(cluster.runDefrag(), defragFailedInterval)
+	assert.Equal(defragFailedInterval, cluster.runDefrag())
 	cluster.opt.Cluster.AdvertiseClientURLs = []string{} // make GetFirstAdvertiseClientURL fail
-	assert.Equal(cluster.runDefrag(), defragNormalInterval)
+	assert.Equal(defragNormalInterval, cluster.runDefrag())
 
 	// test session
 	cluster.session = nil

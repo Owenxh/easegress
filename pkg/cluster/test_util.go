@@ -36,7 +36,7 @@ func check(e error) {
 func CreateOptionsForTest(tempDir string) *option.Options {
 	ports, err := freeport.GetFreePorts(3)
 	check(err)
-	name := fmt.Sprintf("test-member-x")
+	name := "test-member-x"
 	opt := option.New()
 	opt.Name = name
 	opt.ClusterName = "test-cluster"
@@ -53,7 +53,7 @@ func CreateOptionsForTest(tempDir string) *option.Options {
 	opt.LogDir = fmt.Sprintf("%s/log", tempDir)
 	opt.MemberDir = fmt.Sprintf("%s/member", tempDir)
 
-	_, err = opt.Parse()
+	err = opt.Parse()
 	check(err)
 
 	env.InitServerDir(opt)

@@ -15,18 +15,17 @@
  * limitations under the License.
  */
 
+// Package globalfilter provides GlobalFilter.
 package globalfilter
 
 import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/megaease/easegress/pkg/protocol"
-
 	"github.com/megaease/easegress/pkg/context"
-	"github.com/megaease/easegress/pkg/object/httppipeline"
+	"github.com/megaease/easegress/pkg/object/pipeline"
 	"github.com/megaease/easegress/pkg/supervisor"
-	"github.com/megaease/easegress/pkg/util/yamltool"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const (
@@ -51,15 +50,15 @@ type (
 
 	// Spec describes the GlobalFilter.
 	Spec struct {
-		BeforePipeline httppipeline.Spec `yaml:"beforePipeline" jsonschema:"omitempty"`
-		AfterPipeline  httppipeline.Spec `yaml:"afterPipeline" jsonschema:"omitempty"`
+		BeforePipeline *pipeline.Spec `json:"beforePipeline" jsonschema:"omitempty"`
+		AfterPipeline  *pipeline.Spec `json:"afterPipeline" jsonschema:"omitempty"`
 	}
 
-	// pipelineSpec defines httppipeline spec to create an httppipeline entity.
+	// pipelineSpec defines pipeline spec to create an pipeline entity.
 	pipelineSpec struct {
-		Kind              string `yaml:"kind" jsonschema:"omitempty"`
-		Name              string `yaml:"name" jsonschema:"omitempty"`
-		httppipeline.Spec `yaml:",inline"`
+		Kind           string `json:"kind" jsonschema:"omitempty"`
+		Name           string `json:"name" jsonschema:"omitempty"`
+		*pipeline.Spec `json:",inline"`
 	}
 )
 
@@ -67,59 +66,29 @@ func init() {
 	supervisor.Register(&GlobalFilter{})
 }
 
-// CreateAndUpdateBeforePipelineForSpec creates beforPipeline if the spec is nil, otherwise it updates by the spec.
-func (gf *GlobalFilter) CreateAndUpdateBeforePipelineForSpec(spec *Spec, previousGeneration *httppipeline.HTTPPipeline) error {
-	beforePipeline := &pipelineSpec{
-		Kind: httppipeline.Kind,
-		Name: "before",
-		Spec: spec.BeforePipeline,
+// Validate validates Spec.
+func (s *Spec) Validate() (err error) {
+	bothNil := true
+
+	if s.BeforePipeline != nil {
+		bothNil = false
+		if err := s.BeforePipeline.Validate(); err != nil {
+			return fmt.Errorf("before pipeline is invalid: %v", err)
+		}
 	}
-	pipeline, err := gf.CreateAndUpdatePipeline(beforePipeline, previousGeneration)
-	if err != nil {
-		return err
+
+	if s.AfterPipeline != nil {
+		bothNil = false
+		if err := s.AfterPipeline.Validate(); err != nil {
+			return fmt.Errorf("after pipeline is invalid: %v", err)
+		}
 	}
-	if pipeline == nil {
-		return fmt.Errorf("before pipeline is nil, spec: %v", beforePipeline)
+
+	if bothNil {
+		return fmt.Errorf("both beforePipeline and afterPipeline are nil")
 	}
-	gf.beforePipeline.Store(pipeline)
+
 	return nil
-}
-
-// CreateAndUpdateAfterPipelineForSpec creates afterPipeline if the spec is nil, otherwise it updates with the spec.
-func (gf *GlobalFilter) CreateAndUpdateAfterPipelineForSpec(spec *Spec, previousGeneration *httppipeline.HTTPPipeline) error {
-	afterPipeline := &pipelineSpec{
-		Kind: httppipeline.Kind,
-		Name: "after",
-		Spec: spec.AfterPipeline,
-	}
-	pipeline, err := gf.CreateAndUpdatePipeline(afterPipeline, previousGeneration)
-	if err != nil {
-		return err
-	}
-	if pipeline == nil {
-		return fmt.Errorf("after pipeline is nil, spec: %v", afterPipeline)
-	}
-	gf.afterPipeline.Store(pipeline)
-	return nil
-}
-
-// CreateAndUpdatePipeline creates and updates GlobalFilter's pipelines.
-func (gf *GlobalFilter) CreateAndUpdatePipeline(spec *pipelineSpec, previousGeneration *httppipeline.HTTPPipeline) (*httppipeline.HTTPPipeline, error) {
-	// init config
-	config := yamltool.Marshal(spec)
-	specs, err := supervisor.NewSpec(string(config))
-	if err != nil {
-		return nil, err
-	}
-
-	// init or update pipeline
-	var pipeline = new(httppipeline.HTTPPipeline)
-	if previousGeneration != nil {
-		pipeline.Inherit(specs, previousGeneration, nil)
-	} else {
-		pipeline.Init(specs, nil)
-	}
-	return pipeline, nil
 }
 
 // Category returns the object category of itself.
@@ -157,92 +126,69 @@ func (gf *GlobalFilter) Inherit(superSpec *supervisor.Spec, previousGeneration s
 	gf.reload(previousGeneration.(*GlobalFilter))
 }
 
-// Handle `beforePipeline` and `afterPipeline` before and after the httpHandler is executed.
-func (gf *GlobalFilter) Handle(ctx context.HTTPContext, httpHandle protocol.HTTPHandler) {
-	result := gf.beforeHandle(ctx)
-	if result == httppipeline.LabelEND {
-		return
+func (gf *GlobalFilter) reload(previousGeneration *GlobalFilter) {
+	// create and update beforePipeline
+	if gf.spec.BeforePipeline != nil {
+		var previous *pipeline.Pipeline
+		if previousGeneration != nil {
+			previous, _ = previousGeneration.beforePipeline.Load().(*pipeline.Pipeline)
+		}
+		p, err := gf.createPipeline("before", gf.spec.BeforePipeline, previous)
+		if err != nil {
+			panic(fmt.Errorf("create before pipeline failed: %v", err))
+		}
+		gf.beforePipeline.Store(p)
 	}
-	result = httpHandle.Handle(ctx)
-	if result == httppipeline.LabelEND {
-		return
+
+	// create and update afterPipeline
+	if gf.spec.AfterPipeline != nil {
+		var previous *pipeline.Pipeline
+		if previousGeneration != nil {
+			previous, _ = previousGeneration.afterPipeline.Load().(*pipeline.Pipeline)
+		}
+		p, err := gf.createPipeline("after", gf.spec.AfterPipeline, previous)
+		if err != nil {
+			panic(fmt.Errorf("create after pipeline failed: %v", err))
+		}
+		gf.afterPipeline.Store(p)
 	}
-	gf.afterHandle(ctx)
-	return
 }
 
-// BeforeHandle before handler logic for beforePipeline spec.
-func (gf *GlobalFilter) beforeHandle(ctx context.HTTPContext) string {
-	value := gf.beforePipeline.Load()
-	if value == nil {
-		return ""
+func (gf *GlobalFilter) createPipeline(name string, spec *pipeline.Spec, previousGeneration *pipeline.Pipeline) (*pipeline.Pipeline, error) {
+	jsonSpec := codectool.MustMarshalJSON(&pipelineSpec{
+		Kind: pipeline.Kind,
+		Name: name,
+		Spec: spec,
+	})
+
+	fullSpec, err := supervisor.NewSpec(string(jsonSpec))
+	if err != nil {
+		return nil, err
 	}
-	handler, ok := value.(*httppipeline.HTTPPipeline)
-	if !ok {
-		return ""
+
+	// init or update pipeline
+	p := &pipeline.Pipeline{}
+	if previousGeneration != nil {
+		p.Inherit(fullSpec, previousGeneration, nil)
+	} else {
+		p.Init(fullSpec, nil)
 	}
-	return handler.Handle(ctx)
+
+	return p, nil
 }
 
-// AfterHandle after handler logic for afterPipeline spec.
-func (gf *GlobalFilter) afterHandle(ctx context.HTTPContext) string {
-	value := gf.afterPipeline.Load()
-	if value == nil {
-		return ""
-	}
-	handler, ok := value.(*httppipeline.HTTPPipeline)
+// Handle `beforePipeline` and `afterPipeline` before and after the handler is executed.
+func (gf *GlobalFilter) Handle(ctx *context.Context, handler context.Handler) {
+	p, ok := handler.(*pipeline.Pipeline)
 	if !ok {
-		return ""
+		panic("handler is not a pipeline")
 	}
-	return handler.Handle(ctx)
+
+	before, _ := gf.beforePipeline.Load().(*pipeline.Pipeline)
+	after, _ := gf.afterPipeline.Load().(*pipeline.Pipeline)
+	p.HandleWithBeforeAfter(ctx, before, after)
 }
 
 // Close closes GlobalFilter itself.
 func (gf *GlobalFilter) Close() {
-
-}
-
-// Validate validates Spec.
-func (s *Spec) Validate() (err error) {
-
-	err = s.BeforePipeline.Validate()
-	if err != nil {
-		return fmt.Errorf("before pipeline is invalid: %v", err)
-	}
-	err = s.AfterPipeline.Validate()
-	if err != nil {
-		return fmt.Errorf("after pipeline is invalid: %v", err)
-	}
-
-	return nil
-}
-
-func (gf *GlobalFilter) reload(previousGeneration *GlobalFilter) {
-	var beforePreviousPipeline, afterPreviousPipeline *httppipeline.HTTPPipeline
-	// create and update beforePipeline entity
-	if len(gf.spec.BeforePipeline.Flow) != 0 {
-		if previousGeneration != nil {
-			previous := previousGeneration.beforePipeline.Load()
-			if previous != nil {
-				beforePreviousPipeline = previous.(*httppipeline.HTTPPipeline)
-			}
-		}
-		err := gf.CreateAndUpdateBeforePipelineForSpec(gf.spec, beforePreviousPipeline)
-		if err != nil {
-			panic(fmt.Errorf("create before pipeline failed: %v", err))
-		}
-	}
-	//create and update afterPipeline entity
-	if len(gf.spec.AfterPipeline.Flow) != 0 {
-		if previousGeneration != nil {
-			previous := previousGeneration.afterPipeline.Load()
-			if previous != nil {
-				afterPreviousPipeline = previous.(*httppipeline.HTTPPipeline)
-			}
-		}
-		err := gf.CreateAndUpdateAfterPipelineForSpec(gf.spec, afterPreviousPipeline)
-		if err != nil {
-			panic(fmt.Errorf("create after pipeline failed: %v", err))
-		}
-	}
 }

@@ -20,6 +20,7 @@ To make things easier, MegaEase and the community released SDKs to help users to
 
 * [AssemblyScript](https://github.com/megaease/easegress-assemblyscript-sdk)
 * [Golang](https://github.com/xmh19936688/easegress-go-sdk) (developed by @[xmh19936688](https://github.com/xmh19936688))
+* [Rust](https://github.com/megaease/easegress-rust-sdk)
 
 We can follow the documentation of these SDKs to write business logic and compile it to Wasm.
 
@@ -86,11 +87,10 @@ And then create the pipeline `wasm-pipeline` which includes a `WasmHost` filter:
 ```bash
 $ echo '
 name: wasm-pipeline
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: wasm
   - filter: proxy
-    jumpIf: { fallback: END }
 
 filters:
   - name: wasm
@@ -100,8 +100,8 @@ filters:
     timeout: 100ms
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       loadBalance:
         policy: roundRobin' | egctl object create
@@ -109,8 +109,11 @@ filters:
 
 Note we are using the path of the Wasm file as the value of `code` in the spec of `WasmHost`, but the value of `code` can also be a URL (HTTP/HTTPS) or the base64 encoded Wasm code.
 
-Then, we need to set up the backend service by following [the steps in README.md](../README.md#test).
+Then, we need to set up the backend service by following command.
 
+```bash
+go run easegress/example/backend-service/echo/echo.go
+```
 ## Test
 
 Now, let's send some requests to the HTTP server, we can see request header and body are set as desired.
@@ -283,7 +286,7 @@ The `wasm-pipeline` configuration is (we will adjust the value of `maxConcurrenc
 ```bash
 $ echo '
 name: wasm-pipeline
-kind: HTTPPipeline
+kind: Pipeline
 flow:
 - filter: wasm
 filters:
@@ -299,7 +302,7 @@ The `mock-pipeline` configuration is:
 ```bash
 $ echo '
 name: mock-pipeline
-kind: HTTPPipeline
+kind: Pipeline
 flow:
 - filter: mock
 filters:

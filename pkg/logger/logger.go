@@ -15,12 +15,17 @@
  * limitations under the License.
  */
 
+// Package logger provides logger for Easegress.
 package logger
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/go-logr/zapr"
+	"go.opentelemetry.io/otel"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -35,6 +40,7 @@ func Init(opt *option.Options) {
 	initDefault(opt)
 	initHTTPFilter(opt)
 	initRestAPI(opt)
+	initOTel(opt)
 }
 
 // InitNop initializes all logger as nop, mainly for unit testing
@@ -66,6 +72,7 @@ const (
 	filterHTTPAccessFilename = "filter_http_access.log"
 	filterHTTPDumpFilename   = "filter_http_dump.log"
 	adminAPIFilename         = "admin_api.log"
+	otelFilename             = "otel.log"
 
 	// EtcdClientFilename is the filename of etcd client log.
 	EtcdClientFilename = "etcd_client.log"
@@ -98,15 +105,18 @@ func EtcdClientLoggerConfig(opt *option.Options, filename string) *zap.Config {
 		level.SetLevel(zapcore.InfoLevel)
 	}
 
-	outputPaths := []string{common.NormalizeZapLogPath(filepath.Join(opt.AbsLogDir, filename))}
-
-	return &zap.Config{
+	cfg := &zap.Config{
 		Level:            level,
 		Encoding:         "console",
 		EncoderConfig:    encoderConfig,
-		OutputPaths:      outputPaths,
-		ErrorOutputPaths: outputPaths,
+		OutputPaths:      []string{"stdout"},
+		ErrorOutputPaths: []string{"stderr"},
 	}
+	if opt.AbsLogDir != "" {
+		cfg.OutputPaths = []string{common.NormalizeZapLogPath(filepath.Join(opt.AbsLogDir, filename))}
+		cfg.ErrorOutputPaths = cfg.OutputPaths
+	}
+	return cfg
 }
 
 func defaultEncoderConfig() zapcore.EncoderConfig {
@@ -137,9 +147,13 @@ func initDefault(opt *option.Options) {
 		lowestLevel = zap.DebugLevel
 	}
 
-	lf, err := newLogFile(filepath.Join(opt.AbsLogDir, stdoutFilename), systemLogMaxCacheCount)
-	if err != nil {
-		common.Exit(1, err.Error())
+	var err error
+	var gressLF io.Writer = os.Stdout
+	if opt.AbsLogDir != "" {
+		gressLF, err = newLogFile(filepath.Join(opt.AbsLogDir, stdoutFilename), systemLogMaxCacheCount)
+		if err != nil {
+			common.Exit(1, err.Error())
+		}
 	}
 
 	opts := []zap.Option{zap.AddCaller(), zap.AddCallerSkip(1)}
@@ -148,11 +162,14 @@ func initDefault(opt *option.Options) {
 	stderrCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), stderrSyncer, lowestLevel)
 	stderrLogger = zap.New(stderrCore, opts...).Sugar()
 
-	gatewaySyncer := zapcore.AddSync(lf)
-	gatewayCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), gatewaySyncer, lowestLevel)
-	gressLogger = zap.New(gatewayCore, opts...).Sugar()
+	gressSyncer := zapcore.AddSync(gressLF)
+	gressCore := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), gressSyncer, lowestLevel)
+	gressLogger = zap.New(gressCore, opts...).Sugar()
 
-	defaultCore := zapcore.NewTee(gatewayCore, stderrCore)
+	defaultCore := gressCore
+	if gressLF != os.Stdout && gressLF != os.Stderr {
+		defaultCore = zapcore.NewTee(gressCore, stderrCore)
+	}
 	defaultLogger = zap.New(defaultCore, opts...).Sugar()
 }
 
@@ -163,6 +180,11 @@ func initHTTPFilter(opt *option.Options) {
 
 func initRestAPI(opt *option.Options) {
 	restAPILogger = newPlainLogger(opt, adminAPIFilename, systemLogMaxCacheCount)
+}
+
+func initOTel(opt *option.Options) {
+	otelLogger := newPlainLogger(opt, otelFilename, trafficLogMaxCacheCount)
+	otel.SetLogger(zapr.NewLogger(otelLogger.Desugar()))
 }
 
 func newPlainLogger(opt *option.Options, filename string, maxCacheCount uint32) *zap.SugaredLogger {
@@ -180,9 +202,13 @@ func newPlainLogger(opt *option.Options, filename string, maxCacheCount uint32) 
 		LineEnding:    zapcore.DefaultLineEnding,
 	}
 
-	fr, err := newLogFile(filepath.Join(opt.AbsLogDir, filename), maxCacheCount)
-	if err != nil {
-		common.Exit(1, err.Error())
+	var err error
+	var fr io.Writer = os.Stdout
+	if opt.AbsLogDir != "" {
+		fr, err = newLogFile(filepath.Join(opt.AbsLogDir, filename), maxCacheCount)
+		if err != nil {
+			common.Exit(1, err.Error())
+		}
 	}
 
 	syncer := zapcore.AddSync(fr)

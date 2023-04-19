@@ -22,14 +22,14 @@ As a production-ready cloud-native traffic orchestrator, Easegress cares about s
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: proxy
 filters:
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -45,7 +45,7 @@ filters:
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: header-validator
   - filter: proxy
@@ -73,7 +73,7 @@ filters:
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: jwt-validator
   - filter: proxy
@@ -96,7 +96,7 @@ For the full YAML, see [here](#jwt-1)
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: signature-validator
   - filter: proxy
@@ -121,7 +121,7 @@ For the full YAML, see [here](#signature-1)
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: oauth-validator
   - filter: proxy
@@ -148,7 +148,7 @@ filters:
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: oauth-validator
   - filter: proxy
@@ -172,7 +172,7 @@ filters:
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: header-validator
   - filter: proxy
@@ -185,8 +185,8 @@ filters:
         regexp: "^ok-.+$"
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -198,7 +198,7 @@ filters:
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: jwt-validator
   - filter: proxy
@@ -209,10 +209,10 @@ filters:
       cookieName: auth
       algorithm: HS256
       secret: 6d7973656372657
-       - name: proxy
   - kind: Proxy
-    mainPool:
-      servers:
+    name: proxy
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -224,7 +224,7 @@ filters:
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: signature-validator
   - filter: proxy
@@ -235,8 +235,8 @@ filters:
       accessKeys:
         AKID: SECRET
   - kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -248,7 +248,7 @@ filters:
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: oauth-validator
   - filter: proxy
@@ -262,8 +262,8 @@ filters:
       clientSecret: 42620d18-871d-465f-912a-ebcef17ecb82
       insecureTls: false
   - kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -275,7 +275,7 @@ filters:
 
 ``` yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: header-validator
   - filter: proxy
@@ -287,8 +287,8 @@ filters:
       userFile: '/etc/apache2/.htpasswd'
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -300,8 +300,8 @@ filters:
 
 1. https://en.wikipedia.org/wiki/JSON_Web_Token
 2. https://docs.aws.amazon.com/general/latest/gr/sigv4_signing.html
-3. https://github.com/megaease/easegress/blob/main/doc/filters.md#signerliteral
+3. https://github.com/megaease/easegress/blob/main/doc/reference/filters.md#signerliteral
 4. https://oauth.net/2/
-5. https://github.com/megaease/easegress/blob/main/doc/filters.md#validatorOAuth2JWT
+5. https://github.com/megaease/easegress/blob/main/doc/reference/filters.md#validatoroauth2jwt
 6. https://en.wikipedia.org/wiki/Basic_access_authentication
 7. https://manpages.debian.org/testing/apache2-utils/htpasswd.1.en.html

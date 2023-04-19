@@ -15,16 +15,16 @@
  * limitations under the License.
  */
 
+// Package rawconfigtrafficcontroller implements the RawConfigTrafficController.
 package rawconfigtrafficcontroller
 
 import (
 	"fmt"
 
+	"github.com/megaease/easegress/pkg/context"
 	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/httppipeline"
-	"github.com/megaease/easegress/pkg/object/httpserver"
+	"github.com/megaease/easegress/pkg/object/pipeline"
 	"github.com/megaease/easegress/pkg/object/trafficcontroller"
-	"github.com/megaease/easegress/pkg/protocol"
 	"github.com/megaease/easegress/pkg/supervisor"
 )
 
@@ -54,9 +54,6 @@ type (
 
 	// Spec describes RawConfigTrafficController.
 	Spec struct{}
-
-	// Status is the status of RawConfigTrafficController.
-	Status = trafficcontroller.StatusInSameNamespace
 )
 
 func init() {
@@ -90,13 +87,13 @@ func (rctc *RawConfigTrafficController) Inherit(spec *supervisor.Spec, previousG
 	rctc.Init(spec)
 }
 
-// GetHTTPPipeline gets Pipeline within the default namespace
-func (rctc *RawConfigTrafficController) GetHTTPPipeline(name string) (protocol.HTTPHandler, bool) {
-	p, exist := rctc.tc.GetHTTPPipeline(DefaultNamespace, name)
+// GetPipeline gets Pipeline within the default namespace
+func (rctc *RawConfigTrafficController) GetPipeline(name string) (context.Handler, bool) {
+	p, exist := rctc.tc.GetPipeline(DefaultNamespace, name)
 	if !exist {
 		return nil, false
 	}
-	handler := p.Instance().(protocol.HTTPHandler)
+	handler := p.Instance().(context.Handler)
 	return handler, true
 }
 
@@ -138,12 +135,11 @@ func (rctc *RawConfigTrafficController) handleEvent(event *supervisor.ObjectEnti
 		var err error
 
 		kind := entity.Spec().Kind()
-		switch kind {
-		case httpserver.Kind:
-			err = rctc.tc.DeleteHTTPServer(DefaultNamespace, name)
-		case httppipeline.Kind:
-			err = rctc.tc.DeleteHTTPPipeline(DefaultNamespace, name)
-		default:
+		if kind == pipeline.Kind {
+			err = rctc.tc.DeletePipeline(DefaultNamespace, name)
+		} else if _, ok := supervisor.TrafficObjectKinds[kind]; ok {
+			err = rctc.tc.DeleteTrafficGate(DefaultNamespace, name)
+		} else {
 			logger.Errorf("BUG: unexpected kind %T", kind)
 		}
 
@@ -156,12 +152,11 @@ func (rctc *RawConfigTrafficController) handleEvent(event *supervisor.ObjectEnti
 		var err error
 
 		kind := entity.Spec().Kind()
-		switch kind {
-		case httpserver.Kind:
-			_, err = rctc.tc.CreateHTTPServer(DefaultNamespace, entity)
-		case httppipeline.Kind:
-			_, err = rctc.tc.CreateHTTPPipeline(DefaultNamespace, entity)
-		default:
+		if kind == pipeline.Kind {
+			_, err = rctc.tc.CreatePipeline(DefaultNamespace, entity)
+		} else if _, ok := supervisor.TrafficObjectKinds[kind]; ok {
+			_, err = rctc.tc.CreateTrafficGate(DefaultNamespace, entity)
+		} else {
 			logger.Errorf("BUG: unexpected kind %T", kind)
 		}
 
@@ -174,12 +169,11 @@ func (rctc *RawConfigTrafficController) handleEvent(event *supervisor.ObjectEnti
 		var err error
 
 		kind := entity.Instance().Kind()
-		switch kind {
-		case httpserver.Kind:
-			_, err = rctc.tc.UpdateHTTPServer(DefaultNamespace, entity)
-		case httppipeline.Kind:
-			_, err = rctc.tc.UpdateHTTPPipeline(DefaultNamespace, entity)
-		default:
+		if kind == pipeline.Kind {
+			_, err = rctc.tc.UpdatePipeline(DefaultNamespace, entity)
+		} else if _, ok := supervisor.TrafficObjectKinds[kind]; ok {
+			_, err = rctc.tc.UpdateTrafficGate(DefaultNamespace, entity)
+		} else {
 			logger.Errorf("BUG: unexpected kind %T", kind)
 		}
 
@@ -190,31 +184,13 @@ func (rctc *RawConfigTrafficController) handleEvent(event *supervisor.ObjectEnti
 }
 
 // Status returns the status of RawConfigTrafficController.
+// StatusInSameNamespace:
+//   - Namespace: default -> DefaultNamespace
+//   - TrafficGates: map[objectName]objectStatus
+//   - Pipelines: map[objectName]objectStatus
 func (rctc *RawConfigTrafficController) Status() *supervisor.Status {
-	status := &Status{
-		Namespace:     rctc.namespace,
-		HTTPServers:   make(map[string]*trafficcontroller.HTTPServerStatus),
-		HTTPPipelines: make(map[string]*trafficcontroller.HTTPPipelineStatus),
-	}
-
-	rctc.tc.WalkHTTPServers(rctc.namespace, func(entity *supervisor.ObjectEntity) bool {
-		status.HTTPServers[entity.Spec().Name()] = &trafficcontroller.HTTPServerStatus{
-			Spec:   entity.Spec().RawSpec(),
-			Status: entity.Instance().Status().ObjectStatus.(*httpserver.Status),
-		}
-		return true
-	})
-
-	rctc.tc.WalkHTTPPipelines(rctc.namespace, func(entity *supervisor.ObjectEntity) bool {
-		status.HTTPPipelines[entity.Spec().Name()] = &trafficcontroller.HTTPPipelineStatus{
-			Spec:   entity.Spec().RawSpec(),
-			Status: entity.Instance().Status().ObjectStatus.(*httppipeline.Status),
-		}
-		return true
-	})
-
 	return &supervisor.Status{
-		ObjectStatus: status,
+		ObjectStatus: struct{}{},
 	}
 }
 

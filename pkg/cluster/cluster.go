@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
+// Package cluster provides the cluster management.
 package cluster
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,10 +29,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/server/v3/embed"
-	yaml "gopkg.in/yaml.v2"
 
 	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/option"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const (
@@ -60,23 +60,23 @@ const (
 type (
 	// MemberStatus is the member status.
 	MemberStatus struct {
-		Options option.Options `yaml:"options"`
+		Options option.Options `json:"options"`
 
 		// RFC3339 format
-		LastHeartbeatTime string `yaml:"lastHeartbeatTime"`
+		LastHeartbeatTime string `json:"lastHeartbeatTime"`
 
-		LastDefragTime string `yaml:"lastDefragTime,omitempty"`
+		LastDefragTime string `json:"lastDefragTime,omitempty"`
 
 		// Etcd is non-nil only if it's cluster status is primary.
-		Etcd *EtcdStatus `yaml:"etcd,omitempty"`
+		Etcd *EtcdStatus `json:"etcd,omitempty"`
 	}
 
 	// EtcdStatus is the etcd status,
 	// and extracts fields from server.Server.SelfStats.
 	EtcdStatus struct {
-		ID        string `yaml:"id"`
-		StartTime string `yaml:"startTime"`
-		State     string `yaml:"state"`
+		ID        string `json:"id"`
+		StartTime string `json:"startTime"`
+		State     string `json:"state"`
 	}
 
 	// etcdStats aims to extract fields from server.Server.SelfStats.
@@ -98,7 +98,7 @@ func strToLease(s string) (*clientv3.LeaseID, error) {
 
 func newEtcdStats(buff []byte) (*etcdStats, error) {
 	stats := etcdStats{}
-	err := json.Unmarshal(buff, &stats)
+	err := codectool.Unmarshal(buff, &stats)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func New(opt *option.Options) (Cluster, error) {
 		return nil, fmt.Errorf("invalid cluster request timeout: %v", err)
 	}
 
-	// Member file，members.ClusterMembers and members.KnownMembers will be deprecated in the future.
+	// Member file, members.ClusterMembers and members.KnownMembers will be deprecated in the future.
 	// When the new configuration way (cluster.initial-cluster or cluster.primary-listen-peer-urls) is used, let's not create member
 	// instance but let's read member information from pkg/option/options.go's Options.ClusterOptions directly.
 	var membersFile *members
@@ -246,16 +246,6 @@ func (c *cluster) getReady() error {
 		return nil
 	}
 
-	if !c.opt.UseInitialCluster() && !c.opt.ForceNewCluster && c.members != nil && c.members.knownMembersLen() > 1 {
-		client, _ := c.getClient()
-		if client != nil {
-			err := c.addSelfToCluster()
-			if err != nil {
-				logger.Errorf("add self to cluster failed: %v", err)
-			}
-		}
-	}
-
 	done, timeout, err := c.startServer()
 	if err != nil {
 		return fmt.Errorf("start server failed: %v", err)
@@ -279,81 +269,6 @@ func (c *cluster) getReady() error {
 	}
 
 	go c.keepAliveLease()
-
-	return nil
-}
-
-func (c *cluster) addSelfToCluster() error {
-	client, err := c.getClient()
-	if err != nil {
-		return err
-	}
-
-	respList, err := func() (*clientv3.MemberListResponse, error) {
-		ctx, cancel := c.requestContext()
-		defer cancel()
-		return client.MemberList(ctx)
-	}()
-	if err != nil {
-		return err
-	}
-
-	self := c.members.self()
-
-	found := false
-	for _, member := range respList.Members {
-		// Reference: https://github.com/etcd-io/etcd/blob/b7bf33bf5d1cbb1092b542fc4f3cdc911ccc3eaa/etcdctl/ctlv3/command/printer.go#L164-L167
-		if len(member.Name) == 0 {
-			_, err := func() (*clientv3.MemberRemoveResponse, error) {
-				ctx, cancel := c.requestContext()
-				defer cancel()
-				return client.MemberRemove(ctx, member.ID)
-			}()
-			if err != nil {
-				err = fmt.Errorf("remove unhealthy etcd member %x failed: %v",
-					member.ID, err)
-				panic(err)
-			} else {
-				logger.Warnf("remove unhealthy etcd member %x for adding self to cluster",
-					member.ID)
-			}
-		}
-
-		if self.Name == member.Name && self.ID == member.ID {
-			found = true
-			break
-		} else if self.Name == member.Name && self.ID != member.ID {
-			err := fmt.Errorf("conflict id with same name %s: local(%x) != existed(%x). "+
-				"purge this node, clean data directory, and rejoin it back",
-				self.Name, self.ID, member.ID)
-			logger.Errorf("%v", err)
-			panic(err)
-		} else if self.ID == member.ID && self.Name != member.Name {
-			err := fmt.Errorf("conflict name with same id %x: local(%s) != existed(%s). "+
-				"purge this node, clean data directory, and rejoin it back",
-				self.ID, self.Name, member.Name)
-			logger.Errorf("%v", err)
-			panic(err)
-		}
-	}
-
-	if !found {
-		err := c.checkClusterName()
-		if err != nil {
-			return err
-		}
-
-		respAdd, err := func() (*clientv3.MemberAddResponse, error) {
-			ctx, cancel := c.requestContext()
-			defer cancel()
-			return client.MemberAdd(ctx, c.opt.ClusterInitialAdvertisePeerURLs)
-		}()
-		if err != nil {
-			return fmt.Errorf("add member failed: %v", err)
-		}
-		logger.Infof("add %s to member list", self.Name)
-		c.members.updateClusterMembers(respAdd.Members)
-	}
 
 	return nil
 }
@@ -680,12 +595,8 @@ func (c *cluster) startServer() (done, timeout chan struct{}, err error) {
 		close(done)
 		return done, timeout, nil
 	}
-	var etcdConfig *embed.Config
-	if c.opt.UseInitialCluster() {
-		etcdConfig, err = CreateStaticClusterEtcdConfig(c.opt)
-	} else {
-		etcdConfig, err = CreateEtcdConfig(c.opt, c.members)
-	}
+
+	etcdConfig, err := CreateStaticClusterEtcdConfig(c.opt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -833,7 +744,7 @@ func (c *cluster) syncStatus() error {
 
 	status.LastHeartbeatTime = time.Now().Format(time.RFC3339)
 
-	buff, err := yaml.Marshal(status)
+	buff, err := codectool.MarshalJSON(status)
 	if err != nil {
 		return err
 	}

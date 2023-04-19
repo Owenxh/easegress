@@ -22,12 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	yaml "gopkg.in/yaml.v2"
-
-	"github.com/megaease/easegress/pkg/object/httppipeline"
-	"github.com/megaease/easegress/pkg/object/httpserver"
-	"github.com/megaease/easegress/pkg/object/trafficcontroller"
 	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 func (s *Server) _purgeMember(memberName string) {
@@ -80,7 +76,7 @@ func (s *Server) _getObject(name string) *supervisor.Spec {
 
 	spec, err := s.super.NewSpec(*value)
 	if err != nil {
-		panic(fmt.Errorf("bad spec(err: %v) from yaml: %s", err, *value))
+		panic(fmt.Errorf("bad spec(err: %v) from json: %s", err, *value))
 	}
 
 	return spec
@@ -96,7 +92,7 @@ func (s *Server) _listObjects() []*supervisor.Spec {
 	for _, v := range kvs {
 		spec, err := s.super.NewSpec(v)
 		if err != nil {
-			panic(fmt.Errorf("bad spec(err: %v) from yaml: %s", err, v))
+			panic(fmt.Errorf("bad spec(err: %v) from json: %s", err, v))
 		}
 		specs = append(specs, spec)
 	}
@@ -106,7 +102,7 @@ func (s *Server) _listObjects() []*supervisor.Spec {
 
 func (s *Server) _putObject(spec *supervisor.Spec) {
 	err := s.cluster.Put(s.cluster.Layout().ConfigObjectKey(spec.Name()),
-		spec.YAMLConfig())
+		spec.JSONConfig())
 	if err != nil {
 		ClusterPanic(err)
 	}
@@ -128,79 +124,32 @@ func (s *Server) _getStatusObject(name string) map[string]string {
 
 	status := make(map[string]string)
 	for k, v := range kvs {
-		// NOTE: Here omitting the step yaml.Unmarshal in _listStatusObjects.
+		// NOTE: Here omitting the step json.Unmarshal in _listStatusObjects.
 		status[strings.TrimPrefix(k, prefix)] = v
 	}
 
 	return status
 }
 
-func (s *Server) _listStatusObjects() map[string]map[string]interface{} {
+func (s *Server) _listStatusObjects() map[string]interface{} {
 	prefix := s.cluster.Layout().StatusObjectsPrefix()
 	kvs, err := s.cluster.GetPrefix(prefix)
 	if err != nil {
 		ClusterPanic(err)
 	}
 
-	status := make(map[string]map[string]interface{})
+	status := make(map[string]interface{})
 	for k, v := range kvs {
 		k = strings.TrimPrefix(k, prefix)
 
-		om := strings.Split(k, "/")
-		if len(om) != 2 {
-			ClusterPanic(fmt.Errorf("the key %s can't be split into two fields by /", k))
-		}
-		objectName, memberName := om[0], om[1]
-		_, exists := status[objectName]
-		if !exists {
-			status[objectName] = make(map[string]interface{})
-		}
-
 		// NOTE: This needs top-level of the status to be a map.
-		i := map[string]interface{}{}
-		err = yaml.Unmarshal([]byte(v), &i)
+		m := map[string]interface{}{}
+		err = codectool.Unmarshal([]byte(v), &m)
 		if err != nil {
-			ClusterPanic(fmt.Errorf("unmarshal %s to yaml failed: %v", v, err))
+			ClusterPanic(fmt.Errorf("unmarshal %s to json failed: %v", v, err))
 		}
-		status[objectName][memberName] = i
+		status[k] = m
 	}
 
 	return status
-}
-
-func (s *Server) _getStatusObjectFromTrafficController(name string, spec *supervisor.Spec) map[string]string {
-	key := s.cluster.Layout().StatusObjectName(trafficcontroller.Kind, name)
-	prefix := s.cluster.Layout().StatusObjectPrefix(key)
-	kvs, err := s.cluster.GetPrefix(prefix)
-	if err != nil {
-		ClusterPanic(err)
-	}
-
-	ans := make(map[string]string)
-	for _, v := range kvs {
-		if spec.Kind() == httpserver.Kind {
-			status := &trafficcontroller.HTTPServerStatus{}
-			err = yaml.Unmarshal([]byte(v), status)
-			if err != nil {
-				ClusterPanic(fmt.Errorf("unmarshal %s to yaml failed: %v", v, err))
-			}
-			b, err := yaml.Marshal(status.Status)
-			if err != nil {
-				ClusterPanic(fmt.Errorf("unmarshal %v to yaml failed: %v", status.Status, err))
-			}
-			ans[key] = string(b)
-		} else if spec.Kind() == httppipeline.Kind {
-			status := &trafficcontroller.HTTPPipelineStatus{}
-			err = yaml.Unmarshal([]byte(v), status)
-			if err != nil {
-				ClusterPanic(fmt.Errorf("unmarshal %s to yaml failed: %v", v, err))
-			}
-			b, err := yaml.Marshal(status.Status)
-			if err != nil {
-				ClusterPanic(fmt.Errorf("unmarshal %v to yaml failed: %v", status.Status, err))
-			}
-			ans[key] = string(b)
-		}
-	}
-	return ans
 }

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package serviceregistry provides the service registry.
 package serviceregistry
 
 import (
@@ -76,7 +77,7 @@ type (
 		// TODO: Support updating for system controller.
 		// Please notice some components may reference of old system controller
 		// after reloading, this should be fixed.
-		SyncInterval string `yaml:"syncInterval" jsonschema:"required,format=duration"`
+		SyncInterval string `json:"syncInterval" jsonschema:"required,format=duration"`
 	}
 
 	// Status is the status of ServiceRegistry.

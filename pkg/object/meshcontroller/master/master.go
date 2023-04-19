@@ -15,13 +15,12 @@
  * limitations under the License.
  */
 
+// Package master provides master role of Easegress for mesh control plane.
 package master
 
 import (
 	"runtime/debug"
 	"time"
-
-	"gopkg.in/yaml.v2"
 
 	"github.com/megaease/easegress/pkg/api"
 	"github.com/megaease/easegress/pkg/logger"
@@ -31,6 +30,7 @@ import (
 	"github.com/megaease/easegress/pkg/object/meshcontroller/spec"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/storage"
 	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const (
@@ -226,9 +226,9 @@ func (m *Master) isMeshRegistryName(registryName string) bool {
 func (m *Master) updateInstanceStatus(_spec *spec.ServiceInstanceSpec, status string) {
 	_spec.Status = status
 
-	buff, err := yaml.Marshal(_spec)
+	buff, err := codectool.MarshalJSON(_spec)
 	if err != nil {
-		logger.Errorf("BUG: marshal %#v to yaml failed: %v", _spec, err)
+		logger.Errorf("BUG: marshal %#v to json failed: %v", _spec, err)
 		return
 	}
 

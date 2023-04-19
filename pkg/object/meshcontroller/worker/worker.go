@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package worker provides the worker for mesh controller.
 package worker
 
 import (
@@ -29,8 +30,6 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v2"
-
 	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/informer"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/label"
@@ -40,6 +39,7 @@ import (
 	"github.com/megaease/easegress/pkg/object/meshcontroller/spec"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/storage"
 	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/pkg/util/codectool"
 	"github.com/megaease/easegress/pkg/util/jmxtool"
 	"github.com/megaease/easegress/pkg/util/stringtool"
 )
@@ -68,6 +68,7 @@ type (
 		service  *service.Service
 		informer informer.Informer
 
+		registryType         string
 		registryServer       *registrycenter.Server
 		ingressServer        *IngressServer
 		egressServer         *EgressServer
@@ -115,14 +116,23 @@ func New(superSpec *supervisor.Spec) *Worker {
 	store := storage.New(superSpec.Name(), super.Cluster())
 	_service := service.New(superSpec)
 
-	inf := informer.NewInformer(store, serviceName)
+	_informer := informer.NewInformer(store, serviceName)
+	observabilityManager := NewObservabilityServer(serviceName)
+	instanceSpec := &spec.ServiceInstanceSpec{
+		RegistryName: superSpec.Name(),
+		ServiceName:  serviceName,
+		InstanceID:   instanceID,
+		IP:           applicationIP,
+		// Port is assigned when registered.
+		Labels: serviceLabels,
+	}
+
 	registryCenterServer := registrycenter.NewRegistryCenterServer(_spec.RegistryType,
-		superSpec.Name(), serviceName, applicationIP, applicationPort,
-		instanceID, serviceLabels, _service, inf)
+		instanceSpec, _service, _informer, observabilityManager.agentClient)
+
 	ingressServer := NewIngressServer(superSpec, super, serviceName, instanceID, _service)
 	egressServer := NewEgressServer(superSpec, super, serviceName, instanceID, _service)
 
-	observabilityManager := NewObservabilityServer(serviceName)
 	apiServer := newAPIServer(_spec.APIPort)
 
 	worker := &Worker{
@@ -139,8 +149,9 @@ func New(superSpec *supervisor.Spec) *Worker {
 
 		store:    store,
 		service:  _service,
-		informer: inf,
+		informer: _informer,
 
+		registryType:         _spec.RegistryType,
 		registryServer:       registryCenterServer,
 		ingressServer:        ingressServer,
 		egressServer:         egressServer,
@@ -389,9 +400,9 @@ func (worker *Worker) updateHeartbeat() error {
 		InstanceID:  worker.instanceID,
 	}
 	if value != nil {
-		err := yaml.Unmarshal([]byte(*value), status)
+		err := codectool.Unmarshal([]byte(*value), status)
 		if err != nil {
-			logger.Errorf("BUG: unmarshal %s to yaml failed: %v", *value, err)
+			logger.Errorf("BUG: unmarshal %s to json failed: %v", *value, err)
 
 			// NOTE: This is a little strict, maybe we could use the brand new status to update.
 			return err
@@ -399,9 +410,9 @@ func (worker *Worker) updateHeartbeat() error {
 	}
 
 	status.LastHeartbeatTime = time.Now().Format(time.RFC3339)
-	buff, err := yaml.Marshal(status)
+	buff, err := codectool.MarshalJSON(status)
 	if err != nil {
-		logger.Errorf("BUG: marshal %#v to yaml failed: %v", status, err)
+		logger.Errorf("BUG: marshal %#v to json failed: %v", status, err)
 		return err
 	}
 

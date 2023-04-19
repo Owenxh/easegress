@@ -15,29 +15,22 @@
  * limitations under the License.
  */
 
+// Package spec defines the spec for various objects in mesh.
 package spec
 
 import (
-	"bytes"
 	"fmt"
 	"time"
 
-	"gopkg.in/yaml.v2"
-
 	"github.com/megaease/easegress/pkg/cluster/customdata"
-	"github.com/megaease/easegress/pkg/filter/circuitbreaker"
-	"github.com/megaease/easegress/pkg/filter/meshadaptor"
-	"github.com/megaease/easegress/pkg/filter/mock"
-	"github.com/megaease/easegress/pkg/filter/proxy"
-	"github.com/megaease/easegress/pkg/filter/ratelimiter"
-	"github.com/megaease/easegress/pkg/filter/retryer"
-	"github.com/megaease/easegress/pkg/filter/timelimiter"
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/httppipeline"
-	"github.com/megaease/easegress/pkg/supervisor"
-	"github.com/megaease/easegress/pkg/util/httpfilter"
-	"github.com/megaease/easegress/pkg/util/httpheader"
+	"github.com/megaease/easegress/pkg/filters/mock"
+	proxy "github.com/megaease/easegress/pkg/filters/proxies/httpproxy"
+	"github.com/megaease/easegress/pkg/filters/ratelimiter"
+	"github.com/megaease/easegress/pkg/resilience"
+	"github.com/megaease/easegress/pkg/util/stringtool"
 	"github.com/megaease/easegress/pkg/util/urlrule"
+
+	v1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -113,310 +106,295 @@ type (
 	// Admin is the spec of MeshController.
 	Admin struct {
 		// HeartbeatInterval is the interval for one service instance reporting its heartbeat.
-		HeartbeatInterval string `yaml:"heartbeatInterval" jsonschema:"required,format=duration"`
+		HeartbeatInterval string `json:"heartbeatInterval" jsonschema:"required,format=duration"`
+
 		// RegistryTime indicates which protocol the registry center accepts.
-		RegistryType string `yaml:"registryType" jsonschema:"required"`
+		RegistryType string `json:"registryType" jsonschema:"required"`
 
 		// APIPort is the port for worker's API server
-		APIPort int `yaml:"apiPort" jsonschema:"required"`
+		APIPort int `json:"apiPort" jsonschema:"required"`
 
 		// IngressPort is the port for http server in mesh ingress
-		IngressPort int `yaml:"ingressPort" jsonschema:"required"`
+		IngressPort int `json:"ingressPort" jsonschema:"required"`
 
-		ExternalServiceRegistry string `yaml:"externalServiceRegistry" jsonschema:"omitempty"`
+		ExternalServiceRegistry string `json:"externalServiceRegistry" jsonschema:"omitempty"`
 
-		CleanExternalRegistry bool `yaml:"cleanExternalRegistry"`
+		CleanExternalRegistry bool `json:"cleanExternalRegistry"`
 
-		Security *Security `yaml:"security" jsonschema:"omitempty"`
+		Security *Security `json:"security,omitempty" jsonschema:"omitempty"`
 
 		// Sidecar injection relevant config.
-		ImageRegistryURL          string `yaml:"imageRegistryURL" jsonschema:"omitempty"`
-		ImagePullPolicy           string `yaml:"imagePullPolicy" jsonschema:"omitempty"`
-		SidecarImageName          string `yaml:"sidecarImageName" jsonschema:"omitempty"`
-		AgentInitializerImageName string `yaml:"agentInitializerImageName" jsonschema:"omitempty"`
-		Log4jConfigName           string `yaml:"log4jConfigName" jsonschema:"omitempty"`
+		ImageRegistryURL          string `json:"imageRegistryURL" jsonschema:"omitempty"`
+		ImagePullPolicy           string `json:"imagePullPolicy" jsonschema:"omitempty"`
+		SidecarImageName          string `json:"sidecarImageName" jsonschema:"omitempty"`
+		AgentInitializerImageName string `json:"agentInitializerImageName" jsonschema:"omitempty"`
+		Log4jConfigName           string `json:"log4jConfigName" jsonschema:"omitempty"`
 
-		MonitorMTLS *MonitorMTLS `yaml:"monitorMTLS" jsonschema:"omitempty"`
-		WorkerSpec  *WorkerSpec  `yaml:"workerSpec" jsonschema:"omitempty"`
+		MonitorMTLS *MonitorMTLS `json:"monitorMTLS,omitempty" jsonschema:"omitempty"`
+		WorkerSpec  WorkerSpec   `json:"workerSpec" jsonschema:"omitempty"`
 	}
 
 	// WorkerSpec is the spec of worker
 	WorkerSpec struct {
-		Ingress IngressServerSpec `yaml:"ingress" jsonschema:"omitempty"`
-		Egress  EgressServerSpec  `yaml:"egress" jsonschema:"omitempty"`
+		Ingress IngressServerSpec `json:"ingress" jsonschema:"omitempty"`
+		Egress  EgressServerSpec  `json:"egress" jsonschema:"omitempty"`
 	}
 
 	// IngressServerSpec is the spec of ingress httpserver in worker
 	IngressServerSpec struct {
-		KeepAlive        bool   `yaml:"keepAlive" jsonschema:"omitempty"`
-		KeepAliveTimeout string `yaml:"keepAliveTimeout" jsonschema:"omitempty,format=duration"`
+		KeepAlive        bool   `json:"keepAlive" jsonschema:"omitempty"`
+		KeepAliveTimeout string `json:"keepAliveTimeout" jsonschema:"omitempty,format=duration"`
 	}
 
 	// EgressServerSpec is the spec of egress httpserver in worker
 	EgressServerSpec struct {
-		KeepAlive        bool   `yaml:"keepAlive" jsonschema:"omitempty"`
-		KeepAliveTimeout string `yaml:"keepAliveTimeout" jsonschema:"omitempty,format=duration"`
+		KeepAlive        bool   `json:"keepAlive" jsonschema:"omitempty"`
+		KeepAliveTimeout string `json:"keepAliveTimeout" jsonschema:"omitempty,format=duration"`
 	}
 
 	// MonitorMTLS is the spec of mTLS specification of monitor.
 	MonitorMTLS struct {
-		Enabled  bool   `yaml:"enabled" jsonschema:"required"`
-		URL      string `yaml:"url" jsonschema:"required"`
-		Username string `yaml:"username" jsonschema:"required"`
-		Password string `yaml:"password" jsonschema:"required"`
+		Enabled  bool   `json:"enabled" jsonschema:"required"`
+		URL      string `json:"url" jsonschema:"required"`
+		Username string `json:"username" jsonschema:"required"`
+		Password string `json:"password" jsonschema:"required"`
 
-		ReporterAppendType string         `yaml:"reporterAppendType"`
-		CaCertBase64       string         `yaml:"caCertBase64" jsonschema:"required,format=base64"`
-		Certs              []*MonitorCert `yaml:"certs" jsonschema:"required"`
+		ReporterAppendType string         `json:"reporterAppendType"`
+		CaCertBase64       string         `json:"caCertBase64" jsonschema:"required,format=base64"`
+		Certs              []*MonitorCert `json:"certs" jsonschema:"required"`
 	}
 
 	// MonitorCert is the spec for single pack of mTLS.
 	MonitorCert struct {
-		CertBase64 string   `yaml:"certBase64" jsonschema:"required,format=base64"`
-		KeyBase64  string   `yaml:"keyBase64" jsonschema:"required,format=base64"`
-		Services   []string `yaml:"services" jsonschema:"required"`
+		CertBase64 string   `json:"certBase64" jsonschema:"required,format=base64"`
+		KeyBase64  string   `json:"keyBase64" jsonschema:"required,format=base64"`
+		Services   []string `json:"services" jsonschema:"required"`
 	}
 
 	// Security is the spec for mesh-wide security.
 	Security struct {
-		MTLSMode     string `yaml:"mtlsMode" jsonschema:"required"`
-		CertProvider string `yaml:"certProvider" jsonschema:"required"`
+		MTLSMode     string `json:"mtlsMode" jsonschema:"required"`
+		CertProvider string `json:"certProvider" jsonschema:"required"`
 
-		RootCertTTL string `yaml:"rootCertTTL" jsonschema:"required,format=duration"`
-		AppCertTTL  string `yaml:"appCertTTL" jsonschema:"required,format=duration"`
+		RootCertTTL string `json:"rootCertTTL" jsonschema:"required,format=duration"`
+		AppCertTTL  string `json:"appCertTTL" jsonschema:"required,format=duration"`
 	}
 
 	// Service contains the information of service.
 	Service struct {
 		// Empty means mesh registry itself.
-		RegistryName   string `yaml:"registryName" jsonschema:"omitempty"`
-		Name           string `yaml:"name" jsonschema:"required"`
-		RegisterTenant string `yaml:"registerTenant" jsonschema:"required"`
+		RegistryName   string `json:"registryName" jsonschema:"omitempty"`
+		Name           string `json:"name" jsonschema:"required"`
+		RegisterTenant string `json:"registerTenant" jsonschema:"required"`
 
-		Sidecar       *Sidecar       `yaml:"sidecar" jsonschema:"required"`
-		Mock          *Mock          `yaml:"mock" jsonschema:"omitempty"`
-		Resilience    *Resilience    `yaml:"resilience" jsonschema:"omitempty"`
-		Canary        *Canary        `yaml:"canary" jsonschema:"omitempty"`
-		LoadBalance   *LoadBalance   `yaml:"loadBalance" jsonschema:"omitempty"`
-		Observability *Observability `yaml:"observability" jsonschema:"omitempty"`
+		Sidecar       *Sidecar       `json:"sidecar" jsonschema:"required"`
+		Mock          *Mock          `json:"mock,omitempty" jsonschema:"omitempty"`
+		Resilience    *Resilience    `json:"resilience,omitempty" jsonschema:"omitempty"`
+		LoadBalance   *LoadBalance   `json:"loadBalance,omitempty" jsonschema:"omitempty"`
+		Observability *Observability `json:"observability,omitempty" jsonschema:"omitempty"`
+	}
+
+	// ServiceDeployment contains the information of service deployment.
+	ServiceDeployment struct {
+		// The spec of Deployment or StatefulSet of Kubernetes.
+		App interface{} `json:"app" jsonschema:"required"`
+
+		// All specs of ConfigMaps in volumes of the spec.
+		ConfigMaps []*v1.ConfigMap `json:"configMaps" jsonschema:"omitempty"`
+
+		// All specs of Secrets in volumes of the spec.
+		Secrets []*v1.Secret `json:"secrets" jsonschema:"omitempty"`
 	}
 
 	// Mock is the spec of configured and static API responses for this service.
 	Mock struct {
 		// Enable is the mocking switch for this service.
-		Enabled bool `yaml:"enabled" jsonschema:"required"`
+		Enabled bool `json:"enabled" jsonschema:"required"`
 
 		// Rules are the mocking matching and responding configurations.
-		Rules []*mock.Rule `yaml:"rules" jsonschema:"omitempty"`
+		Rules []*mock.Rule `json:"rules" jsonschema:"omitempty"`
 	}
 
 	// Resilience is the spec of service resilience.
 	Resilience struct {
-		RateLimiter    *ratelimiter.Spec    `yaml:"rateLimiter" jsonschema:"omitempty"`
-		CircuitBreaker *circuitbreaker.Spec `yaml:"circuitBreaker" jsonschema:"omitempty"`
-		Retryer        *retryer.Spec        `yaml:"retryer" jsonschema:"omitempty"`
-		TimeLimiter    *timelimiter.Spec    `yaml:"timeLimiter" jsonschema:"omitempty"`
+		RateLimiter    *ratelimiter.Rule              `json:"rateLimiter,omitempty" jsonschema:"omitempty"`
+		CircuitBreaker *resilience.CircuitBreakerRule `json:"circuitBreaker,omitempty" jsonschema:"omitempty"`
+		Retry          *resilience.RetryRule          `json:"retry,omitempty" jsonschema:"omitempty"`
+		TimeLimiter    *TimeLimiterRule               `json:"timeLimiter,omitempty" jsonschema:"omitempty"`
+		FailureCodes   []int                          `json:"failureCodes,omitempty" jsonschema:"omitempty,uniqueItems=true"`
 	}
 
-	// Canary is the spec of service canary.
-	// Deprecated: replaced by ServiceCanary.
-	Canary struct {
-		CanaryRules []*CanaryRule `yaml:"canaryRules" jsonschema:"omitempty"`
+	// TimeLimiterRule is the spec of TimeLimiter.
+	TimeLimiterRule struct {
+		Timeout string `json:"timeout" jsonschema:"required,format=duration"`
 	}
 
 	// CanaryRule is one matching rule for canary.
 	CanaryRule struct {
-		ServiceInstanceLabels map[string]string               `yaml:"serviceInstanceLabels" jsonschema:"required"`
-		Headers               map[string]*urlrule.StringMatch `yaml:"headers" jsonschema:"required"`
-		URLs                  []*urlrule.URLRule              `yaml:"urls" jsonschema:"required"`
+		ServiceInstanceLabels map[string]string                    `json:"serviceInstanceLabels" jsonschema:"required"`
+		Headers               map[string]*stringtool.StringMatcher `json:"headers" jsonschema:"required"`
+		URLs                  []*urlrule.URLRule                   `json:"urls" jsonschema:"required"`
 	}
 
 	// ServiceCanary is the service canary entry.
 	ServiceCanary struct {
-		Name string `yaml:"name" jsonschema:"required"`
+		Name string `json:"name" jsonschema:"required"`
 		// Priority must be [1, 9], the default is 5 if user does not set it.
 		// The smaller number get higher priority.
 		// The order is sorted by name alphabetically in the same priority.
-		Priority     int              `yaml:"priority" jsonschema:"omitempty"`
-		Selector     *ServiceSelector `yaml:"selector" jsonschema:"required"`
-		TrafficRules *TrafficRules    `yaml:"trafficRules" jsonschema:"required"`
+		Priority     int              `json:"priority" jsonschema:"omitempty"`
+		Selector     *ServiceSelector `json:"selector" jsonschema:"required"`
+		TrafficRules *TrafficRules    `json:"trafficRules" jsonschema:"required"`
 	}
 
 	// TrafficRules is the rules of traffic.
 	TrafficRules struct {
-		Headers map[string]*urlrule.StringMatch `yaml:"headers" jsonschema:"required"`
-	}
-
-	// GlobalCanaryHeaders is the spec of global service
-	GlobalCanaryHeaders struct {
-		ServiceHeaders map[string][]string `yaml:"serviceHeaders" jsonschema:"omitempty"`
-	}
-
-	// GlobalTransmission is the spec of global transmission data for Agent.
-	GlobalTransmission struct {
-		// Headers are the canary headers, all endpoints of mesh should transmit them.
-		Headers []string `yaml:"headers" jsonschema:"omitempty"`
-
-		MomitorMTLS *MTLSTransmission `yaml:"monitorMTLS"`
-	}
-
-	// MTLSTransmission is the mTLS config for Agent.
-	MTLSTransmission struct {
-		CaCertBase64 string `yaml:"caCertBase64" jsonschema:"required,format=base64"`
-		CertBase64   string `yaml:"certBase64" jsonschema:"required,format=base64"`
-		KeyBase64    string `yaml:"keyBase64" jsonschema:"required,format=base64"`
+		Headers map[string]*stringtool.StringMatcher `json:"headers" jsonschema:"required"`
 	}
 
 	// LoadBalance is the spec of service load balance.
-	LoadBalance = proxy.LoadBalance
+	LoadBalance = proxy.LoadBalanceSpec
 
 	// Sidecar is the spec of service sidecar.
 	Sidecar struct {
-		DiscoveryType   string `yaml:"discoveryType" jsonschema:"required"`
-		Address         string `yaml:"address" jsonschema:"required"`
-		IngressPort     int    `yaml:"ingressPort" jsonschema:"required"`
-		IngressProtocol string `yaml:"ingressProtocol" jsonschema:"required"`
-		EgressPort      int    `yaml:"egressPort" jsonschema:"required"`
-		EgressProtocol  string `yaml:"egressProtocol" jsonschema:"required"`
+		DiscoveryType   string `json:"discoveryType" jsonschema:"required"`
+		Address         string `json:"address" jsonschema:"required"`
+		IngressPort     int    `json:"ingressPort" jsonschema:"required"`
+		IngressProtocol string `json:"ingressProtocol" jsonschema:"required"`
+		EgressPort      int    `json:"egressPort" jsonschema:"required"`
+		EgressProtocol  string `json:"egressProtocol" jsonschema:"required"`
 	}
 
 	// Observability is the spec of service observability.
 	Observability struct {
-		OutputServer *ObservabilityOutputServer `yaml:"outputServer" jsonschema:"omitempty"`
-		Tracings     *ObservabilityTracings     `yaml:"tracings" jsonschema:"omitempty"`
-		Metrics      *ObservabilityMetrics      `yaml:"metrics" jsonschema:"omitempty"`
+		OutputServer *ObservabilityOutputServer `json:"outputServer,omitempty" jsonschema:"omitempty"`
+		Tracings     *ObservabilityTracings     `json:"tracings,omitempty" jsonschema:"omitempty"`
+		Metrics      *ObservabilityMetrics      `json:"metrics,omitempty" jsonschema:"omitempty"`
 	}
 
 	// ObservabilityOutputServer is the output server of observability.
 	ObservabilityOutputServer struct {
-		Enabled         bool   `yaml:"enabled" jsonschema:"required"`
-		BootstrapServer string `yaml:"bootstrapServer" jsonschema:"required"`
-		Timeout         int    `yaml:"timeout" jsonschema:"required"`
+		Enabled         bool   `json:"enabled" jsonschema:"required"`
+		BootstrapServer string `json:"bootstrapServer" jsonschema:"required"`
+		Timeout         int    `json:"timeout" jsonschema:"required"`
 	}
 
 	// ObservabilityTracings is the tracings of observability.
 	ObservabilityTracings struct {
-		Enabled     bool                              `yaml:"enabled" jsonschema:"required"`
-		SampleByQPS int                               `yaml:"sampleByQPS" jsonschema:"required"`
-		Output      ObservabilityTracingsOutputConfig `yaml:"output" jsonschema:"required"`
+		Enabled     bool                              `json:"enabled" jsonschema:"required"`
+		SampleByQPS int                               `json:"sampleByQPS" jsonschema:"required"`
+		Output      ObservabilityTracingsOutputConfig `json:"output" jsonschema:"required"`
 
-		Request      ObservabilityTracingsDetail `yaml:"request" jsonschema:"required"`
-		RemoteInvoke ObservabilityTracingsDetail `yaml:"remoteInvoke" jsonschema:"required"`
-		Kafka        ObservabilityTracingsDetail `yaml:"kafka" jsonschema:"required"`
-		Jdbc         ObservabilityTracingsDetail `yaml:"jdbc" jsonschema:"required"`
-		Redis        ObservabilityTracingsDetail `yaml:"redis" jsonschema:"required"`
-		Rabbit       ObservabilityTracingsDetail `yaml:"rabbit" jsonschema:"required"`
+		Request      ObservabilityTracingsDetail `json:"request" jsonschema:"required"`
+		RemoteInvoke ObservabilityTracingsDetail `json:"remoteInvoke" jsonschema:"required"`
+		Kafka        ObservabilityTracingsDetail `json:"kafka" jsonschema:"required"`
+		Jdbc         ObservabilityTracingsDetail `json:"jdbc" jsonschema:"required"`
+		Redis        ObservabilityTracingsDetail `json:"redis" jsonschema:"required"`
+		Rabbit       ObservabilityTracingsDetail `json:"rabbit" jsonschema:"required"`
 	}
 
 	// ObservabilityTracingsOutputConfig is the tracing output configuration
 	ObservabilityTracingsOutputConfig struct {
-		Enabled         bool   `yaml:"enabled" jsonschema:"required"`
-		ReportThread    int    `yaml:"reportThread" jsonschema:"required"`
-		Topic           string `yaml:"topic" jsonschema:"required"`
-		MessageMaxBytes int    `yaml:"messageMaxBytes" jsonschema:"required"`
-		QueuedMaxSpans  int    `yaml:"queuedMaxSpans" jsonschema:"required"`
-		QueuedMaxSize   int    `yaml:"queuedMaxSize" jsonschema:"required"`
-		MessageTimeout  int    `yaml:"messageTimeout" jsonschema:"required"`
+		Enabled         bool   `json:"enabled" jsonschema:"required"`
+		ReportThread    int    `json:"reportThread" jsonschema:"required"`
+		Topic           string `json:"topic" jsonschema:"required"`
+		MessageMaxBytes int    `json:"messageMaxBytes" jsonschema:"required"`
+		QueuedMaxSpans  int    `json:"queuedMaxSpans" jsonschema:"required"`
+		QueuedMaxSize   int    `json:"queuedMaxSize" jsonschema:"required"`
+		MessageTimeout  int    `json:"messageTimeout" jsonschema:"required"`
 	}
 	// ObservabilityTracingsDetail is the tracing detail of observability.
 	ObservabilityTracingsDetail struct {
-		Enabled       bool   `yaml:"enabled" jsonschema:"required"`
-		ServicePrefix string `yaml:"servicePrefix" jsonschema:"required"`
+		Enabled       bool   `json:"enabled" jsonschema:"required"`
+		ServicePrefix string `json:"servicePrefix" jsonschema:"required"`
 	}
 
 	// ObservabilityMetrics is the metrics of observability.
 	ObservabilityMetrics struct {
-		Enabled        bool                       `yaml:"enabled" jsonschema:"required"`
-		Access         ObservabilityMetricsDetail `yaml:"access" jsonschema:"required"`
-		Request        ObservabilityMetricsDetail `yaml:"request" jsonschema:"required"`
-		JdbcStatement  ObservabilityMetricsDetail `yaml:"jdbcStatement" jsonschema:"required"`
-		JdbcConnection ObservabilityMetricsDetail `yaml:"jdbcConnection" jsonschema:"required"`
-		Rabbit         ObservabilityMetricsDetail `yaml:"rabbit" jsonschema:"required"`
-		Kafka          ObservabilityMetricsDetail `yaml:"kafka" jsonschema:"required"`
-		Redis          ObservabilityMetricsDetail `yaml:"redis" jsonschema:"required"`
-		JvmGC          ObservabilityMetricsDetail `yaml:"jvmGc" jsonschema:"required"`
-		JvmMemory      ObservabilityMetricsDetail `yaml:"jvmMemory" jsonschema:"required"`
-		Md5Dictionary  ObservabilityMetricsDetail `yaml:"md5Dictionary" jsonschema:"required"`
+		Enabled        bool                       `json:"enabled" jsonschema:"required"`
+		Access         ObservabilityMetricsDetail `json:"access" jsonschema:"required"`
+		Request        ObservabilityMetricsDetail `json:"request" jsonschema:"required"`
+		JdbcStatement  ObservabilityMetricsDetail `json:"jdbcStatement" jsonschema:"required"`
+		JdbcConnection ObservabilityMetricsDetail `json:"jdbcConnection" jsonschema:"required"`
+		Rabbit         ObservabilityMetricsDetail `json:"rabbit" jsonschema:"required"`
+		Kafka          ObservabilityMetricsDetail `json:"kafka" jsonschema:"required"`
+		Redis          ObservabilityMetricsDetail `json:"redis" jsonschema:"required"`
+		JvmGC          ObservabilityMetricsDetail `json:"jvmGc" jsonschema:"required"`
+		JvmMemory      ObservabilityMetricsDetail `json:"jvmMemory" jsonschema:"required"`
+		Md5Dictionary  ObservabilityMetricsDetail `json:"md5Dictionary" jsonschema:"required"`
 	}
 
 	// ObservabilityMetricsDetail is the metrics detail of observability.
 	ObservabilityMetricsDetail struct {
-		Enabled  bool   `yaml:"enabled" jsonschema:"required"`
-		Interval int    `yaml:"interval" jsonschema:"required"`
-		Topic    string `yaml:"topic" jsonschema:"required"`
+		Enabled  bool   `json:"enabled" jsonschema:"required"`
+		Interval int    `json:"interval" jsonschema:"required"`
+		Topic    string `json:"topic" jsonschema:"required"`
 	}
 
 	// Tenant contains the information of tenant.
 	Tenant struct {
-		Name string `yaml:"name"`
+		Name string `json:"name"`
 
-		Services []string `yaml:"services" jsonschema:"omitempty"`
+		Services []string `json:"services,omitempty" jsonschema:"omitempty"`
 		// Format: RFC3339
-		CreatedAt   string `yaml:"createdAt" jsonschema:"omitempty"`
-		Description string `yaml:"description"`
+		CreatedAt   string `json:"createdAt" jsonschema:"omitempty"`
+		Description string `json:"description"`
 	}
 
 	// Certificate is one cert for mesh service instance or root CA.
 	Certificate struct {
-		IP          string `yaml:"ip" jsonschema:"required"`
-		ServiceName string `yaml:"servieName" jsonschema:"required"`
-		CertBase64  string `yaml:"certBase64" jsonschema:"required"`
-		KeyBase64   string `yaml:"keyBase64" jsonschema:"required"`
-		TTL         string `yaml:"ttl" jsonschema:"required,format=duration"`
-		SignTime    string `yaml:"signTime" jsonschema:"required,format=timerfc3339"`
-		HOST        string `yaml:"host" jsonschema:"required"`
+		IP          string `json:"ip" jsonschema:"required"`
+		ServiceName string `json:"servieName" jsonschema:"required"`
+		CertBase64  string `json:"certBase64" jsonschema:"required"`
+		KeyBase64   string `json:"keyBase64" jsonschema:"required"`
+		TTL         string `json:"ttl" jsonschema:"required,format=duration"`
+		SignTime    string `json:"signTime" jsonschema:"required,format=timerfc3339"`
+		HOST        string `json:"host" jsonschema:"required"`
 	}
 
 	// ServiceInstanceSpec is the spec of service instance.
 	// FIXME: Use the unified struct: serviceregistry.ServiceInstanceSpec.
 	ServiceInstanceSpec struct {
-		RegistryName string `yaml:"registryName" jsonschema:"required"`
+		// AgentType supports EaseAgent, GoSDK, None(same as empty value).
+		AgentType    string `json:"agentType" jsonschema:"required"`
+		RegistryName string `json:"registryName" jsonschema:"required"`
 		// Provide by registry client
-		ServiceName  string            `yaml:"serviceName" jsonschema:"required"`
-		InstanceID   string            `yaml:"instanceID" jsonschema:"required"`
-		IP           string            `yaml:"ip" jsonschema:"required"`
-		Port         uint32            `yaml:"port" jsonschema:"required"`
-		RegistryTime string            `yaml:"registryTime" jsonschema:"omitempty"`
-		Labels       map[string]string `yaml:"labels" jsonschema:"omitempty"`
+		ServiceName  string            `json:"serviceName" jsonschema:"required"`
+		InstanceID   string            `json:"instanceID" jsonschema:"required"`
+		IP           string            `json:"ip" jsonschema:"required"`
+		Port         uint32            `json:"port" jsonschema:"required"`
+		RegistryTime string            `json:"registryTime" jsonschema:"omitempty"`
+		Labels       map[string]string `json:"labels" jsonschema:"omitempty"`
 
 		// Set by heartbeat timer event or API
-		Status string `yaml:"status" jsonschema:"omitempty"`
+		Status string `json:"status" jsonschema:"omitempty"`
 	}
 
 	// IngressPath is the path for a mesh ingress rule
 	IngressPath struct {
-		Path          string `yaml:"path" jsonschema:"required"`
-		RewriteTarget string `yaml:"rewriteTarget" jsonschema:"omitempty"`
-		Backend       string `yaml:"backend" jsonschema:"required"`
+		Path          string `json:"path" jsonschema:"required,pattern=^/"`
+		RewriteTarget string `json:"rewriteTarget" jsonschema:"omitempty"`
+		Backend       string `json:"backend" jsonschema:"required"`
 	}
 
 	// IngressRule is the rule for mesh ingress
 	IngressRule struct {
-		Host  string         `yaml:"host" jsonschema:"omitempty"`
-		Paths []*IngressPath `yaml:"paths" jsonschema:"required"`
+		Host  string         `json:"host" jsonschema:"omitempty"`
+		Paths []*IngressPath `json:"paths" jsonschema:"required"`
 	}
 
 	// Ingress is the spec of mesh ingress
 	Ingress struct {
-		Name  string         `yaml:"name" jsonschema:"required"`
-		Rules []*IngressRule `yaml:"rules" jsonschema:"required"`
+		Name  string         `json:"name" jsonschema:"required"`
+		Rules []*IngressRule `json:"rules" jsonschema:"required"`
 	}
 
 	// ServiceInstanceStatus is the status of service instance.
 	ServiceInstanceStatus struct {
-		ServiceName string `yaml:"serviceName" jsonschema:"required"`
-		InstanceID  string `yaml:"instanceID" jsonschema:"required"`
+		ServiceName string `json:"serviceName" jsonschema:"required"`
+		InstanceID  string `json:"instanceID" jsonschema:"required"`
 		// RFC3339 format
-		LastHeartbeatTime string `yaml:"lastHeartbeatTime" jsonschema:"required,format=timerfc3339"`
-	}
-
-	pipelineSpecBuilder struct {
-		Kind string `yaml:"kind"`
-		Name string `yaml:"name"`
-
-		// NOTE: Can't use *httppipeline.Spec here.
-		// Reference: https://github.com/go-yaml/yaml/issues/356
-		httppipeline.Spec `yaml:",inline"`
+		LastHeartbeatTime string `json:"lastHeartbeatTime" jsonschema:"required,format=timerfc3339"`
 	}
 
 	// CustomResourceKind defines the spec of a custom resource kind
@@ -449,7 +427,7 @@ type (
 	// HTTPRouteGroup defines the spec of a HTTP route group
 	HTTPRouteGroup struct {
 		// Name is the name for referencing a HTTPRouteGroup
-		Name string `yaml:"name" jsonschema:"required"`
+		Name string `json:"name" jsonschema:"required"`
 
 		// Matches is a list of HTTPMatch to match traffic
 		Matches []HTTPMatch `json:"matches,omitempty"`
@@ -480,7 +458,7 @@ type (
 	// TrafficTarget is the specification of a TrafficTarget
 	TrafficTarget struct {
 		// Name is the name for referencing a TrafficTarget
-		Name string `yaml:"name" jsonschema:"required"`
+		Name string `json:"name" jsonschema:"required"`
 
 		// Destination is the service to allow ingress traffic
 		Destination IdentityBindingSubject `json:"destination"`
@@ -504,7 +482,7 @@ func (sc ServiceCanary) Validate() error {
 
 // Clone clones TrafficRules.
 func (tr *TrafficRules) Clone() *TrafficRules {
-	headers := map[string]*urlrule.StringMatch{}
+	headers := map[string]*stringtool.StringMatcher{}
 	for k, v := range tr.Headers {
 		stringMatch := *v
 		headers[k] = &stringMatch
@@ -580,540 +558,4 @@ func (a Admin) EnablemTLS() bool {
 // Key returns the key of ServiceInstanceSpec.
 func (s *ServiceInstanceSpec) Key() string {
 	return fmt.Sprintf("%s/%s/%s", s.RegistryName, s.ServiceName, s.InstanceID)
-}
-
-func newPipelineSpecBuilder(name string) *pipelineSpecBuilder {
-	return &pipelineSpecBuilder{
-		Kind: httppipeline.Kind,
-		Name: name,
-		Spec: httppipeline.Spec{},
-	}
-}
-
-func (b *pipelineSpecBuilder) yamlConfig() string {
-	buff, err := yaml.Marshal(b)
-	if err != nil {
-		logger.Errorf("BUG: marshal %#v to yaml failed: %v", b, err)
-	}
-	return string(buff)
-}
-
-func (b *pipelineSpecBuilder) appendRateLimiter(rl *ratelimiter.Spec) *pipelineSpecBuilder {
-	const name = "rateLimiter"
-
-	if rl == nil || len(rl.Policies) == 0 || len(rl.URLs) == 0 {
-		return b
-	}
-
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: name})
-	b.Filters = append(b.Filters, map[string]interface{}{
-		"kind":             ratelimiter.Kind,
-		"name":             name,
-		"policies":         rl.Policies,
-		"defaultPolicyRef": rl.DefaultPolicyRef,
-		"urls":             rl.URLs,
-	})
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendCircuitBreaker(cb *circuitbreaker.Spec) *pipelineSpecBuilder {
-	const name = "circuitBreaker"
-
-	if cb == nil || len(cb.Policies) == 0 || len(cb.URLs) == 0 {
-		return b
-	}
-
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: name})
-	b.Filters = append(b.Filters, map[string]interface{}{
-		"kind":             circuitbreaker.Kind,
-		"name":             name,
-		"policies":         cb.Policies,
-		"defaultPolicyRef": cb.DefaultPolicyRef,
-		"urls":             cb.URLs,
-	})
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendRetryer(r *retryer.Spec) *pipelineSpecBuilder {
-	const name = "retryer"
-
-	if r == nil || len(r.Policies) == 0 || len(r.URLs) == 0 {
-		return b
-	}
-
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: name})
-	b.Filters = append(b.Filters, map[string]interface{}{
-		"kind":             retryer.Kind,
-		"name":             name,
-		"policies":         r.Policies,
-		"defaultPolicyRef": r.DefaultPolicyRef,
-		"urls":             r.URLs,
-	})
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendMock(m []*mock.Rule) *pipelineSpecBuilder {
-	const name = "mock"
-	if len(m) == 0 {
-		return b
-	}
-
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: name})
-	b.Filters = append(b.Filters, map[string]interface{}{
-		"kind":  mock.Kind,
-		"name":  name,
-		"rules": m,
-	})
-
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendTimeLimiter(tl *timelimiter.Spec) *pipelineSpecBuilder {
-	const name = "timeLimiter"
-
-	if tl == nil || len(tl.URLs) == 0 {
-		return b
-	}
-
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: name})
-	b.Filters = append(b.Filters, map[string]interface{}{
-		"kind":           timelimiter.Kind,
-		"name":           name,
-		"defaultTimeout": tl.DefaultTimeoutDuration,
-		"urls":           tl.URLs,
-	})
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendProxyWithCanary(instanceSpecs []*ServiceInstanceSpec,
-	canaries []*ServiceCanary, lb *proxy.LoadBalance, cert, rootCert *Certificate) *pipelineSpecBuilder {
-
-	filterName := "backend"
-	if lb == nil {
-		lb = &proxy.LoadBalance{
-			Policy: proxy.PolicyRoundRobin,
-		}
-	}
-
-	needMTLS := false
-	if cert != nil && rootCert != nil {
-		needMTLS = true
-	}
-
-	mainPool := &proxy.PoolSpec{
-		LoadBalance: lb,
-	}
-	candidatePools := make([]*proxy.PoolSpec, len(canaries))
-
-	filter := map[string]interface{}{
-		"kind":     proxy.Kind,
-		"name":     filterName,
-		"mainPool": mainPool,
-	}
-	if needMTLS {
-		filter["mtls"] = &proxy.MTLS{
-			CertBase64:     cert.CertBase64,
-			KeyBase64:      cert.KeyBase64,
-			RootCertBase64: rootCert.CertBase64,
-		}
-	}
-
-	makeServer := func(instance *ServiceInstanceSpec) *proxy.Server {
-		var protocol string
-		if needMTLS {
-			protocol = "https"
-		} else {
-			protocol = "http"
-		}
-		return &proxy.Server{
-			URL: fmt.Sprintf("%s://%s:%d", protocol, instance.IP, instance.Port),
-		}
-	}
-
-	for _, instance := range instanceSpecs {
-		if instance.Status != ServiceStatusUp {
-			continue
-		}
-
-		server := makeServer(instance)
-
-		isCanary := false
-		for i, canary := range canaries {
-			if !canary.Selector.MatchInstance(instance.ServiceName,
-				instance.Labels) {
-				continue
-			}
-
-			if candidatePools[i] == nil {
-				headers := canary.TrafficRules.Clone().Headers
-				headers[ServiceCanaryHeaderKey] = &urlrule.StringMatch{
-					Exact: canary.Name,
-				}
-				candidatePools[i] = &proxy.PoolSpec{
-					Filter: &httpfilter.Spec{
-						MatchAllHeaders: true,
-						Headers:         headers,
-					},
-					LoadBalance: lb,
-				}
-			}
-
-			candidatePools[i].Servers = append(candidatePools[i].Servers, server)
-
-			isCanary = true
-		}
-
-		if !isCanary {
-			mainPool.Servers = append(mainPool.Servers, server)
-		}
-	}
-
-	candidates := []*proxy.PoolSpec{}
-	for _, candidate := range candidatePools {
-		if candidate == nil || len(candidate.Servers) == 0 {
-			continue
-		}
-
-		candidates = append(candidates, candidate)
-	}
-
-	if len(candidates) != 0 {
-		filter["candidatePools"] = candidates
-	}
-
-	b.Filters = append(b.Filters, filter)
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: filterName})
-
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendMeshAdaptor(canaries []*ServiceCanary) *pipelineSpecBuilder {
-	if len(canaries) == 0 {
-		return b
-	}
-
-	filterName := "meshAdaptor"
-
-	filter := map[string]interface{}{
-		"kind": meshadaptor.Kind,
-		"name": filterName,
-	}
-	adaptors := make([]*meshadaptor.ServiceCanaryAdaptor, len(canaries))
-	for i, canary := range canaries {
-		// NOTE: It means that setting `X-Mesh-Service-Canary: canaryName`
-		// if `X-Mesh-Service-Canary` does not exist and other headers are matching.
-		headers := canary.TrafficRules.Clone().Headers
-		headers[ServiceCanaryHeaderKey] = &urlrule.StringMatch{
-			Empty: true,
-		}
-		adaptors[i] = &meshadaptor.ServiceCanaryAdaptor{
-			Filter: &httpfilter.Spec{
-				MatchAllHeaders: true,
-				Headers:         headers,
-			},
-			Header: &httpheader.AdaptSpec{
-				Set: map[string]string{
-					ServiceCanaryHeaderKey: canary.Name,
-				},
-			},
-		}
-	}
-
-	filter["serviceCanaries"] = adaptors
-
-	b.Filters = append(b.Filters, filter)
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: filterName})
-
-	return b
-}
-
-func (b *pipelineSpecBuilder) appendProxy(mainServers []*proxy.Server, lb *proxy.LoadBalance) *pipelineSpecBuilder {
-	backendName := "backend"
-
-	if lb == nil {
-		lb = &proxy.LoadBalance{
-			Policy: proxy.PolicyRoundRobin,
-		}
-	}
-
-	b.Flow = append(b.Flow, httppipeline.Flow{Filter: backendName})
-	b.Filters = append(b.Filters, map[string]interface{}{
-		"kind": proxy.Kind,
-		"name": backendName,
-		"mainPool": &proxy.PoolSpec{
-			Servers:     mainServers,
-			LoadBalance: lb,
-		},
-	})
-
-	return b
-}
-
-// IngressHTTPServerSpec generates HTTP server spec for ingress.
-// as ingress does not belong to a service, it is not a method of 'Service'
-func IngressHTTPServerSpec(port int, rules []*IngressRule) (*supervisor.Spec, error) {
-	const specFmt = `
-kind: HTTPServer
-name: mesh-ingress-server
-port: %d
-keepAlive: false
-https: false
-rules:`
-
-	const ruleFmt = `
-  - host: %s
-    paths:`
-
-	const pathFmt = `
-      - pathRegexp: %s
-        rewriteTarget: %s
-        backend: %s`
-
-	buf := bytes.Buffer{}
-
-	str := fmt.Sprintf(specFmt, port)
-	buf.WriteString(str)
-
-	for _, r := range rules {
-		str = fmt.Sprintf(ruleFmt, r.Host)
-		buf.WriteString(str)
-		for j := range r.Paths {
-			p := r.Paths[j]
-			str = fmt.Sprintf(pathFmt, p.Path, p.RewriteTarget, p.Backend)
-			buf.WriteString(str)
-		}
-	}
-
-	yamlConfig := buf.String()
-	spec, err := supervisor.NewSpec(yamlConfig)
-	if err != nil {
-		logger.Errorf("new spec for %s failed: %v", yamlConfig, err)
-		return nil, err
-	}
-
-	return spec, nil
-}
-
-// IngressControllerPipelineSpec generates a spec for ingress controller pipeline spec.
-func (s *Service) IngressControllerPipelineSpec(instanceSpecs []*ServiceInstanceSpec,
-	canaries []*ServiceCanary, cert, rootCert *Certificate) (*supervisor.Spec, error) {
-
-	pipelineSpecBuilder := newPipelineSpecBuilder(s.IngressControllerPipelineName())
-
-	pipelineSpecBuilder.appendMeshAdaptor(canaries)
-	pipelineSpecBuilder.appendProxyWithCanary(instanceSpecs, canaries, s.LoadBalance, cert, rootCert)
-
-	yamlConfig := pipelineSpecBuilder.yamlConfig()
-	superSpec, err := supervisor.NewSpec(yamlConfig)
-	if err != nil {
-		logger.Errorf("new spec for %s failed: %v", yamlConfig, err)
-		return nil, err
-	}
-
-	return superSpec, nil
-}
-
-// SidecarIngressHTTPServerSpec generates a spec for sidecar ingress HTTP server
-func (s *Service) SidecarIngressHTTPServerSpec(keepalive bool, timeout string, cert, rootCert *Certificate) (*supervisor.Spec, error) {
-	ingressHTTPServerFormat := `
-kind: HTTPServer
-name: %s
-port: %d
-keepAlive: %v
-keepAliveTimeout: %s
-https: %s
-certBase64: %s
-keyBase64: %s
-caCertBase64: %s
-rules:
-  - paths:
-    - pathPrefix: /
-      backend: %s`
-
-	name := fmt.Sprintf("mesh-ingress-server-%s", s.Name)
-	pipelineName := fmt.Sprintf("mesh-ingress-pipeline-%s", s.Name)
-	certBase64, keyBase64, rootCertBaser64, needHTTPS := "", "", "", "false"
-	if cert != nil && rootCert != nil {
-		certBase64 = cert.CertBase64
-		keyBase64 = cert.KeyBase64
-		rootCertBaser64 = rootCert.CertBase64
-		needHTTPS = "true"
-	}
-	if timeout == "" {
-		timeout = defaultKeepAliveTimeout
-	}
-	yamlConfig := fmt.Sprintf(ingressHTTPServerFormat, name,
-		s.Sidecar.IngressPort, keepalive, timeout, needHTTPS, certBase64, keyBase64, rootCertBaser64, pipelineName)
-
-	superSpec, err := supervisor.NewSpec(yamlConfig)
-	if err != nil {
-		logger.Errorf("new spec for %s failed: %v", yamlConfig, err)
-		return nil, err
-	}
-
-	return superSpec, nil
-}
-
-// UniqueCanaryHeaders returns the unique headers in canary filter rules.
-func (s *Service) UniqueCanaryHeaders() []string {
-	var headers []string
-	if s.Canary == nil || len(s.Canary.CanaryRules) == 0 {
-		return headers
-	}
-	keys := make(map[string]bool)
-	for _, canaryRule := range s.Canary.CanaryRules {
-		if canaryRule != nil {
-			for k := range canaryRule.Headers {
-				keys[k] = true
-			}
-		}
-	}
-
-	for k := range keys {
-		headers = append(headers, k)
-	}
-	return headers
-}
-
-// EgressHTTPServerName returns egress HTTP server name
-func (s *Service) EgressHTTPServerName() string {
-	return fmt.Sprintf("mesh-egress-server-%s", s.Name)
-}
-
-// EgressHandlerName returns egress handler name.
-func (s *Service) EgressHandlerName() string {
-	return fmt.Sprintf("mesh-egress-handler-%s", s.Name)
-}
-
-// EgressPipelineName returns egress pipeline name
-func (s *Service) EgressPipelineName() string {
-	return fmt.Sprintf("mesh-egress-pipeline-%s", s.Name)
-}
-
-// IngressHTTPServerName returns the ingress server name
-func (s *Service) IngressHTTPServerName() string {
-	return fmt.Sprintf("mesh-ingress-server-%s", s.Name)
-}
-
-// IngressHandlerName returns the ingress handler name
-func (s *Service) IngressHandlerName() string {
-	return fmt.Sprintf("mesh-ingress-handler-%s", s.Name)
-}
-
-// SidecarIngressPipelineName returns the ingress pipeline name
-func (s *Service) SidecarIngressPipelineName() string {
-	return fmt.Sprintf("mesh-ingress-pipeline-%s", s.Name)
-}
-
-// IngressControllerPipelineName returns the ingress pipeline name
-func (s *Service) IngressControllerPipelineName() string {
-	return fmt.Sprintf("mesh-ingresscontroller-pipeline-%s", s.Name)
-}
-
-// BackendName returns backend service name
-func (s *Service) BackendName() string {
-	return s.Name
-}
-
-// SidecarEgressHTTPServerSpec returns a spec for egress HTTP server
-func (s *Service) SidecarEgressHTTPServerSpec(keepalive bool, timeout string) (*supervisor.Spec, error) {
-	egressHTTPServerFormat := `
-kind: HTTPServer
-name: %s
-port: %d
-keepAlive: %v
-keepAliveTimeout: %s
-https: false
-`
-	if timeout == "" {
-		timeout = defaultKeepAliveTimeout
-	}
-	yamlConfig := fmt.Sprintf(egressHTTPServerFormat,
-		s.EgressHTTPServerName(),
-		s.Sidecar.EgressPort,
-		keepalive,
-		timeout)
-
-	superSpec, err := supervisor.NewSpec(yamlConfig)
-	if err != nil {
-		logger.Errorf("new spec for %s failed: %v", err)
-		return nil, err
-	}
-
-	return superSpec, nil
-}
-
-// SidecarIngressPipelineSpec returns a spec for sidecar ingress pipeline
-func (s *Service) SidecarIngressPipelineSpec(applicationPort uint32) (*supervisor.Spec, error) {
-	mainServers := []*proxy.Server{
-		{
-			URL: s.ApplicationEndpoint(applicationPort),
-		},
-	}
-
-	pipelineSpecBuilder := newPipelineSpecBuilder(s.SidecarIngressPipelineName())
-
-	if s.Resilience != nil {
-		pipelineSpecBuilder.appendRateLimiter(s.Resilience.RateLimiter)
-	}
-
-	pipelineSpecBuilder.appendProxy(mainServers, s.LoadBalance)
-
-	yamlConfig := pipelineSpecBuilder.yamlConfig()
-	superSpec, err := supervisor.NewSpec(yamlConfig)
-	if err != nil {
-		logger.Errorf("new spec for %s failed: %v", yamlConfig, err)
-		return nil, err
-	}
-
-	return superSpec, nil
-}
-
-// SidecarEgressPipelineSpec returns a spec for sidecar egress pipeline
-func (s *Service) SidecarEgressPipelineSpec(instanceSpecs []*ServiceInstanceSpec,
-	canaries []*ServiceCanary, appCert, rootCert *Certificate) (*supervisor.Spec, error) {
-
-	if len(instanceSpecs) == 0 {
-		return nil, fmt.Errorf("no instance")
-	}
-
-	pipelineSpecBuilder := newPipelineSpecBuilder(s.EgressPipelineName())
-
-	pipelineSpecBuilder.appendMeshAdaptor(canaries)
-
-	if s.Mock != nil && s.Mock.Enabled {
-		pipelineSpecBuilder.appendMock(s.Mock.Rules)
-	}
-
-	if s.Resilience != nil {
-		pipelineSpecBuilder.appendTimeLimiter(s.Resilience.TimeLimiter)
-		pipelineSpecBuilder.appendRetryer(s.Resilience.Retryer)
-		pipelineSpecBuilder.appendCircuitBreaker(s.Resilience.CircuitBreaker)
-	}
-
-	pipelineSpecBuilder.appendProxyWithCanary(instanceSpecs, canaries, s.LoadBalance, appCert, rootCert)
-
-	yamlConfig := pipelineSpecBuilder.yamlConfig()
-	superSpec, err := supervisor.NewSpec(yamlConfig)
-	if err != nil {
-		logger.Errorf("new spec for %s failed: %v", yamlConfig, err)
-		return nil, err
-	}
-
-	return superSpec, nil
-}
-
-// ApplicationEndpoint returns application endpoint URL string
-func (s *Service) ApplicationEndpoint(port uint32) string {
-	return fmt.Sprintf("%s://%s:%d", s.Sidecar.IngressProtocol, s.Sidecar.Address, port)
-}
-
-// IngressEndpoint returns Ingress endpoint URL string
-func (s *Service) IngressEndpoint() string {
-	return fmt.Sprintf("%s://%s:%d", s.Sidecar.IngressProtocol, s.Sidecar.Address, s.Sidecar.IngressPort)
-}
-
-// EgressEndpoint returns Egress endpoint URL string
-func (s *Service) EgressEndpoint() string {
-	return fmt.Sprintf("%s://%s:%d", s.Sidecar.EgressProtocol, s.Sidecar.Address, s.Sidecar.EgressPort)
 }

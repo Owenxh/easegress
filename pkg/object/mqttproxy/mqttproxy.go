@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package mqttproxy implements the MQTTProxy.
 package mqttproxy
 
 import (
@@ -23,18 +24,21 @@ import (
 	"net/url"
 
 	"github.com/megaease/easegress/pkg/cluster"
+	"github.com/megaease/easegress/pkg/context"
 	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/supervisor"
-	"gopkg.in/yaml.v2"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const (
 	// Category is the category of MQTTProxy.
-	Category = supervisor.CategoryBusinessController
+	Category = supervisor.CategoryTrafficGate
 
 	// Kind is the kind of MQTTProxy.
 	Kind = "MQTTProxy"
 )
+
+var _ supervisor.TrafficObject = (*MQTTProxy)(nil)
 
 func init() {
 	supervisor.Register(&MQTTProxy{})
@@ -86,26 +90,27 @@ func updatePort(urlStr string, hostWithPort string) (string, error) {
 	return u.String(), nil
 }
 
-func memberURLFunc(superSpec *supervisor.Spec) func(string, string) ([]string, error) {
+func memberURLFunc(superSpec *supervisor.Spec) func(string, string) (map[string]string, error) {
 	c := superSpec.Super().Cluster()
 
-	f := func(egName, name string) ([]string, error) {
+	f := func(egName, name string) (map[string]string, error) {
 		logger.SpanDebugf(nil, "get member url for %v %v", egName, name)
 		kv, err := c.GetPrefix(c.Layout().StatusMemberPrefix())
 		if err != nil {
 			logger.SpanErrorf(nil, "cluster get member list failed: %v", err)
-			return []string{}, err
+			return map[string]string{}, err
 		}
-		urls := []string{}
+		// urls := []string{}
+		urls := make(map[string]string)
 		for _, v := range kv {
 			memberStatus := cluster.MemberStatus{}
-			err := yaml.Unmarshal([]byte(v), &memberStatus)
+			err := codectool.Unmarshal([]byte(v), &memberStatus)
 			if err != nil {
 				logger.SpanErrorf(nil, "cluster status unmarshal failed: %v", err)
-				return []string{}, err
+				return map[string]string{}, err
 			}
 			if memberStatus.Options.Name != egName {
-				egURLs := memberStatus.Options.ClusterInitialAdvertisePeerURLs
+				egURLs := memberStatus.Options.Cluster.InitialAdvertisePeerURLs
 				peerURLVariableName := "ClusterInitialAdvertisePeerURLs"
 				if memberStatus.Options.UseInitialCluster() {
 					egURLs = memberStatus.Options.Cluster.InitialAdvertisePeerURLs
@@ -120,7 +125,8 @@ func memberURLFunc(superSpec *supervisor.Spec) func(string, string) ([]string, e
 				if err != nil {
 					return nil, fmt.Errorf("get url for %v failed: %v", memberStatus.Options.Name, err)
 				}
-				urls = append(urls, newURL+"/apis/v1"+fmt.Sprintf(mqttAPITopicPublishPrefix, name))
+				// urls = append(urls, newURL+"/apis/v2"+fmt.Sprintf(mqttAPITopicPublishPrefix, name))
+				urls[memberStatus.Options.Name] = newURL + "/apis/v2" + fmt.Sprintf(mqttAPITopicPublishPrefix, name)
 			}
 		}
 		logger.SpanDebugf(nil, "eg %v %v get urls %v", egName, name, urls)
@@ -130,14 +136,14 @@ func memberURLFunc(superSpec *supervisor.Spec) func(string, string) ([]string, e
 }
 
 // Init initializes Function.
-func (mp *MQTTProxy) Init(superSpec *supervisor.Spec) {
+func (mp *MQTTProxy) Init(superSpec *supervisor.Spec, muxMapper context.MuxMapper) {
 	spec := superSpec.ObjectSpec().(*Spec)
 	spec.Name = superSpec.Name()
 	spec.EGName = superSpec.Super().Options().Name
 	mp.superSpec, mp.spec = superSpec, spec
 
 	store := newStorage(superSpec.Super().Cluster())
-	mp.broker = newBroker(spec, store, memberURLFunc(superSpec))
+	mp.broker = newBroker(spec, store, muxMapper, memberURLFunc(superSpec))
 	if mp.broker == nil {
 		panic(fmt.Sprintf("broker %v start failed", spec.Name))
 	}
@@ -145,9 +151,9 @@ func (mp *MQTTProxy) Init(superSpec *supervisor.Spec) {
 }
 
 // Inherit inherits previous generation of WebSocketServer.
-func (mp *MQTTProxy) Inherit(superSpec *supervisor.Spec, previousGeneration supervisor.Object) {
+func (mp *MQTTProxy) Inherit(superSpec *supervisor.Spec, previousGeneration supervisor.Object, muxMapper context.MuxMapper) {
 	previousGeneration.Close()
-	mp.Init(superSpec)
+	mp.Init(superSpec, muxMapper)
 }
 
 // Close closes MQTTProxy.

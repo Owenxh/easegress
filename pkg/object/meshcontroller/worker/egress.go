@@ -19,6 +19,7 @@ package worker
 
 import (
 	"fmt"
+	"github.com/megaease/easegress/pkg/object/httpserver/routers"
 	"sync"
 
 	"github.com/megaease/easegress/pkg/logger"
@@ -29,7 +30,7 @@ import (
 	"github.com/megaease/easegress/pkg/object/meshcontroller/storage"
 	"github.com/megaease/easegress/pkg/object/trafficcontroller"
 	"github.com/megaease/easegress/pkg/supervisor"
-	"gopkg.in/yaml.v2"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const egressRPCKey = "X-Mesh-Rpc-Service"
@@ -57,17 +58,17 @@ type (
 	}
 
 	httpServerSpecBuilder struct {
-		Kind            string `yaml:"kind"`
-		Name            string `yaml:"name"`
-		httpserver.Spec `yaml:",inline"`
-		Cert            *spec.Certificate `yaml:"-"`
+		Kind            string `json:"kind"`
+		Name            string `json:"name"`
+		httpserver.Spec `json:",inline"`
+		Cert            *spec.Certificate `json:"-"`
 	}
 )
 
 // NewEgressServer creates an initialized egress server
 func NewEgressServer(superSpec *supervisor.Spec, super *supervisor.Supervisor,
-	serviceName, instanceID string, service *service.Service) *EgressServer {
-
+	serviceName, instanceID string, service *service.Service,
+) *EgressServer {
 	entity, exists := super.GetSystemController(trafficcontroller.Kind)
 	if !exists {
 		panic(fmt.Errorf("BUG: traffic controller not found"))
@@ -86,7 +87,7 @@ func NewEgressServer(superSpec *supervisor.Spec, super *supervisor.Supervisor,
 
 		inf:         inf,
 		tc:          tc,
-		namespace:   fmt.Sprintf("%s/%s", superSpec.Name(), "egress"),
+		namespace:   superSpec.Name(),
 		pipelines:   make(map[string]*supervisor.ObjectEntity),
 		serviceName: serviceName,
 		service:     service,
@@ -104,10 +105,10 @@ func newHTTPServerSpecBuilder(httpServerName string, spec *httpserver.Spec) *htt
 	}
 }
 
-func (b *httpServerSpecBuilder) yamlConfig() string {
-	buff, err := yaml.Marshal(b)
+func (b *httpServerSpecBuilder) jsonConfig() string {
+	buff, err := codectool.MarshalJSON(b)
 	if err != nil {
-		logger.Errorf("BUG: marshal %#v to yaml failed: %v", b, err)
+		logger.Errorf("BUG: marshal %#v to json failed: %v", b, err)
 	}
 	return string(buff)
 }
@@ -121,14 +122,14 @@ func (egs *EgressServer) InitEgress(service *spec.Service) error {
 		return nil
 	}
 
-	egs.egressServerName = service.EgressHTTPServerName()
+	egs.egressServerName = service.SidecarEgressServerName()
 	admSpec := egs.superSpec.ObjectSpec().(*spec.Admin)
 	superSpec, err := service.SidecarEgressHTTPServerSpec(admSpec.WorkerSpec.Egress.KeepAlive, admSpec.WorkerSpec.Egress.KeepAliveTimeout)
 	if err != nil {
 		return err
 	}
 
-	entity, err := egs.tc.CreateHTTPServerForSpec(egs.namespace, superSpec)
+	entity, err := egs.tc.CreateTrafficGateForSpec(egs.namespace, superSpec)
 	if err != nil {
 		return fmt.Errorf("create http server %s failed: %v", superSpec.Name(), err)
 	}
@@ -354,16 +355,17 @@ func (egs *EgressServer) listServiceOfTrafficTarget(tts []*spec.TrafficTarget) m
 }
 
 // regex rule: ^(\w+\.)*vet-services\.(\w+)\.svc\..+$
-//  can match e.g. _tcp.vet-services.easemesh.svc.cluster.local
-//   		   vet-services.easemesh.svc.cluster.local
-//   		   _zip._tcp.vet-services.easemesh.svc.com
+//
+//	can match e.g. _tcp.vet-services.easemesh.svc.cluster.local
+//	 		   vet-services.easemesh.svc.cluster.local
+//	 		   _zip._tcp.vet-services.easemesh.svc.com
 func (egs *EgressServer) buildHostRegex(serviceName string) string {
 	return `^(\w+\.)*` + serviceName + `\.(\w+)\.svc\..+`
 }
 
-func (egs *EgressServer) buildMuxRule(pipelineName, serviceName string, matches []spec.HTTPMatch) []*httpserver.Rule {
-	var rules []*httpserver.Rule
-	headers := []*httpserver.Header{
+func (egs *EgressServer) buildMuxRule(pipelineName, serviceName string, matches []spec.HTTPMatch) []*routers.Rule {
+	var rules []*routers.Rule
+	headers := []*routers.Header{
 		{
 			Key: egressRPCKey,
 			// Value should be the service name
@@ -377,8 +379,8 @@ func (egs *EgressServer) buildMuxRule(pipelineName, serviceName string, matches 
 			methods = nil
 		}
 
-		rule := &httpserver.Rule{
-			Paths: []*httpserver.Path{
+		rule := &routers.Rule{
+			Paths: []*routers.Path{
 				{
 					Methods:    methods,
 					PathRegexp: "^" + m.PathRegex,
@@ -439,7 +441,7 @@ func (egs *EgressServer) reload() {
 		}
 		logger.Infof("service: %s visit: %s pipeline init ok", egs.serviceName, svc.Name)
 
-		entity, err := egs.tc.CreateHTTPPipelineForSpec(egs.namespace, pipelineSpec)
+		entity, err := egs.tc.CreatePipelineForSpec(egs.namespace, pipelineSpec)
 		if err != nil {
 			logger.Errorf("update http pipeline failed: %v", err)
 			return
@@ -459,11 +461,11 @@ func (egs *EgressServer) reload() {
 	httpServerSpec.Rules = nil
 
 	for serviceName := range lgSvcs {
-		rule := &httpserver.Rule{
-			Paths: []*httpserver.Path{
+		rule := &routers.Rule{
+			Paths: []*routers.Path{
 				{
 					PathPrefix: "/",
-					Headers: []*httpserver.Header{
+					Headers: []*routers.Header{
 						{
 							Key: egressRPCKey,
 							// Value should be the service name
@@ -479,10 +481,10 @@ func (egs *EgressServer) reload() {
 		// for matching only host name request
 		//   1) try exactly matching
 		//   2) try matching with regexp
-		ruleHost := &httpserver.Rule{
+		ruleHost := &routers.Rule{
 			Host:       serviceName,
 			HostRegexp: egs.buildHostRegex(serviceName),
-			Paths: []*httpserver.Path{
+			Paths: []*routers.Path{
 				{
 					PathPrefix: "/",
 					// this name should be the pipeline full name
@@ -521,12 +523,12 @@ func (egs *EgressServer) reload() {
 	}
 
 	builder := newHTTPServerSpecBuilder(egs.egressServerName, httpServerSpec)
-	superSpec, err := supervisor.NewSpec(builder.yamlConfig())
+	superSpec, err := supervisor.NewSpec(builder.jsonConfig())
 	if err != nil {
 		logger.Errorf("new spec for %s failed: %v", err)
 		return
 	}
-	entity, err := egs.tc.UpdateHTTPServerForSpec(egs.namespace, superSpec)
+	entity, err := egs.tc.UpdateTrafficGateForSpec(egs.namespace, superSpec)
 	if err != nil {
 		logger.Errorf("update http server %s failed: %v", egs.egressServerName, err)
 		return
@@ -552,9 +554,9 @@ func (egs *EgressServer) Close() {
 	egs.inf.Close()
 
 	if egs._ready() {
-		egs.tc.DeleteHTTPServer(egs.namespace, egs.httpServer.Spec().Name())
+		egs.tc.DeleteTrafficGate(egs.namespace, egs.httpServer.Spec().Name())
 		for _, entity := range egs.pipelines {
-			egs.tc.DeleteHTTPPipeline(egs.namespace, entity.Spec().Name())
+			egs.tc.DeletePipeline(egs.namespace, entity.Spec().Name())
 		}
 	}
 }

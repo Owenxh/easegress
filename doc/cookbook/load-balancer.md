@@ -27,14 +27,14 @@ The filter `Proxy` is the filter to fire requests to backend servers. It contain
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: proxy
 filters:
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -48,10 +48,10 @@ Sometimes backend applications can't adapt to quick changes of requirements of t
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: requestAdaptor
-  - fitter: proxy
+  - filter: proxy
   - filter: responseAdaptor
 filters:
   - name: requestAdaptor
@@ -59,7 +59,7 @@ filters:
     host: easegress.megaease.com
     method: POST
     path:
-    addPrefix: /apis/v2
+      addPrefix: /apis/v2
     header:
       set:
         X-Api-Version: v2
@@ -85,10 +85,10 @@ For the full YAML, see [here](#traffic-adaptor-change-something-of-two-way-traff
 
 ```yaml
 name: pipeline-reverse-proxy
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: requestAdaptor
-  - fitter: proxy
+  - filter: proxy
   - filter: responseAdaptor
 filters:
   - name: requestAdaptor
@@ -96,7 +96,7 @@ filters:
     host: easegress.megaease.com
     method: POST
     path:
-    addPrefix: /apis/v2
+      trimPrefix: /apis/v2
     header:
       set:
         X-Api-Version: v2
@@ -111,8 +111,8 @@ filters:
 
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097

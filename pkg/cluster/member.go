@@ -27,20 +27,20 @@ import (
 	"sync"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
-	yaml "gopkg.in/yaml.v2"
 
 	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/option"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 const (
-	membersFilename       = "members.yaml"
-	membersBackupFilename = "members.bak.yaml"
+	membersFilename       = "members.json"
+	membersBackupFilename = "members.bak.json"
 )
 
 type (
 	members struct {
-		sync.RWMutex `yaml:"-"`
+		sync.RWMutex `json:"-"`
 
 		opt        *option.Options
 		file       string
@@ -49,17 +49,17 @@ type (
 
 		selfIDChanged bool
 
-		ClusterMembers *membersSlice `yaml:"clusterMembers"`
-		KnownMembers   *membersSlice `yaml:"knownMembers"`
+		ClusterMembers *membersSlice `json:"clusterMembers"`
+		KnownMembers   *membersSlice `json:"knownMembers"`
 	}
 
 	// membersSlice carries unique members whose PeerURL is the primary id.
 	membersSlice []*member
 
 	member struct {
-		ID      uint64 `yaml:"id"`
-		Name    string `yaml:"name"`
-		PeerURL string `yaml:"peerURL"`
+		ID      uint64 `json:"id"`
+		Name    string `json:"name"`
+		PeerURL string `json:"peerURL"`
 	}
 )
 
@@ -72,35 +72,12 @@ func newMembers(opt *option.Options) (*members, error) {
 		ClusterMembers: newMemberSlices(),
 		KnownMembers:   newMemberSlices(),
 	}
-	m.initializeMembers(opt)
+
 	err := m.load()
 	if err != nil {
 		return nil, err
 	}
 	return m, nil
-}
-
-// initializeMembers adds first member to ClusterMembers and all members to KnownMembers.
-func (m *members) initializeMembers(opt *option.Options) {
-	initMS := make(membersSlice, 0)
-	if opt.ClusterRole == "primary" && len(opt.ClusterInitialAdvertisePeerURLs) != 0 {
-		// Cluster is started member by member --> start with cluster of size 1
-		initMS = append(initMS, &member{
-			Name:    opt.Name,
-			PeerURL: opt.ClusterInitialAdvertisePeerURLs[0],
-		})
-	}
-	m.ClusterMembers.update(initMS)
-
-	// Add all members to list of known members
-	if len(opt.ClusterJoinURLs) != 0 {
-		for _, peerURL := range opt.ClusterJoinURLs {
-			initMS = append(initMS, &member{
-				PeerURL: peerURL,
-			})
-		}
-	}
-	m.KnownMembers.update(initMS)
 }
 
 func (m *members) fileExist() bool {
@@ -119,7 +96,7 @@ func (m *members) load() error {
 	}
 
 	membersToLoad := &members{}
-	err = yaml.Unmarshal(buff, membersToLoad)
+	err = codectool.Unmarshal(buff, membersToLoad)
 	if err != nil {
 		return err
 	}
@@ -132,9 +109,9 @@ func (m *members) load() error {
 
 // store protected by callers.
 func (m *members) store() {
-	buff, err := yaml.Marshal(m)
+	buff, err := codectool.MarshalJSON(m)
 	if err != nil {
-		logger.Errorf("BUG: get yaml of %#v failed: %v", m.KnownMembers, err)
+		logger.Errorf("BUG: get json of %#v failed: %v", m.KnownMembers, err)
 	}
 	if bytes.Equal(m.lastBuff, buff) {
 		return
@@ -162,10 +139,10 @@ func (m *members) store() {
 func (m *members) self() *member {
 	m.RLock()
 	defer m.RUnlock()
-	return m._self()
+	return m.unsafeSelf()
 }
 
-func (m *members) _self() *member {
+func (m *members) unsafeSelf() *member {
 	// NOTE: use clusterMembers before KnownMembers
 	// owing to getting real-time ID if possible.
 	s := m.ClusterMembers.getByName(m.opt.Name)
@@ -184,8 +161,8 @@ func (m *members) _self() *member {
 	}
 
 	peerURL := ""
-	if len(m.opt.ClusterInitialAdvertisePeerURLs) != 0 {
-		peerURL = m.opt.ClusterInitialAdvertisePeerURLs[0]
+	if len(m.opt.Cluster.InitialAdvertisePeerURLs) != 0 {
+		peerURL = m.opt.Cluster.InitialAdvertisePeerURLs[0]
 	}
 
 	return &member{
@@ -194,31 +171,22 @@ func (m *members) _self() *member {
 	}
 }
 
-func (m *members) _selfWithoutID() *member {
-	s := m._self()
-	s.ID = 0
-	return s
-}
-
-func (m *members) clusterMembersLen() int {
-	m.RLock()
-	defer m.RUnlock()
-	return m.ClusterMembers.Len()
-}
-
 func (m *members) updateClusterMembers(pbMembers []*pb.Member) {
 	m.Lock()
 	defer m.Unlock()
 
-	olderSelfID := m._self().ID
+	self := m.unsafeSelf()
+	olderSelfID := self.ID
 
 	ms := pbMembersToMembersSlice(pbMembers)
 	// NOTE: The member list of result of MemberAdd carrys empty name
 	// of the adding member which is myself.
-	ms.update(membersSlice{m._selfWithoutID()})
+	self.ID = 0
+	ms.update(membersSlice{self})
+
 	m.ClusterMembers.replace(ms)
 
-	selfID := m._self().ID
+	selfID := m.unsafeSelf().ID
 	if selfID != olderSelfID {
 		logger.Infof("self ID changed from %x to %x", olderSelfID, selfID)
 		m.selfIDChanged = true
@@ -233,12 +201,6 @@ func (m *members) updateClusterMembers(pbMembers []*pb.Member) {
 	m.store()
 }
 
-func (m *members) knownMembersLen() int {
-	m.RLock()
-	defer m.RUnlock()
-	return m.KnownMembers.Len()
-}
-
 func (m *members) knownPeerURLs() []string {
 	m.RLock()
 	defer m.RUnlock()
@@ -246,15 +208,8 @@ func (m *members) knownPeerURLs() []string {
 	return m.KnownMembers.peerURLs()
 }
 
-func (m *members) initCluster() string {
-	m.RLock()
-	defer m.RUnlock()
-
-	return m.ClusterMembers.initCluster()
-}
-
 func pbMembersToMembersSlice(pbMembers []*pb.Member) membersSlice {
-	ms := make(membersSlice, 0)
+	ms := make(membersSlice, 0, len(pbMembers))
 	for _, pbMember := range pbMembers {
 		var peerURL string
 		if len(pbMember.PeerURLs) > 0 {
@@ -277,16 +232,6 @@ func (ms membersSlice) Len() int           { return len(ms) }
 func (ms membersSlice) Swap(i, j int)      { ms[i], ms[j] = ms[j], ms[i] }
 func (ms membersSlice) Less(i, j int) bool { return ms[i].Name < ms[j].Name }
 
-func (ms membersSlice) copy() membersSlice {
-	copied := make(membersSlice, len(ms))
-	for i := 0; i < len(copied); i++ {
-		member := *ms[i]
-		copied[i] = &member
-	}
-
-	return copied
-}
-
 func (ms membersSlice) String() string {
 	ss := make([]string, 0)
 	for _, member := range ms {
@@ -306,16 +251,6 @@ func (ms membersSlice) peerURLs() []string {
 		ss = append(ss, m.PeerURL)
 	}
 	return ss
-}
-
-func (ms membersSlice) initCluster() string {
-	ss := make([]string, 0)
-	for _, m := range ms {
-		if m.Name != "" {
-			ss = append(ss, fmt.Sprintf("%s=%s", m.Name, m.PeerURL))
-		}
-	}
-	return strings.Join(ss, ",")
 }
 
 // update adds the member if there is not the member.

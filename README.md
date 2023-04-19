@@ -1,6 +1,12 @@
 # Easegress
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/megaease/easegress)](https://goreportcard.com/report/github.com/megaease/easegress)    [![GitHub Workflow Status (branch)](https://img.shields.io/github/workflow/status/megaease/easegress/Test/main)](https://github.com/megaease/easegress/actions/workflows/test.yml)     [![codecov](https://codecov.io/gh/megaease/easegress/branch/main/graph/badge.svg?token=5Q80B98LPI)](https://codecov.io/gh/megaease/easegress)     [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)      [![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/megaease/easegress)](https://github.com/megaease/easegress/blob/main/go.mod)     [![Join MegaEase Slack](https://img.shields.io/badge/slack-megaease-brightgreen?logo=slack)](https://join.slack.com/t/openmegaease/shared_invite/zt-upo7v306-lYPHvVwKnvwlqR0Zl2vveA) 
+[![Go Report Card](https://goreportcard.com/badge/github.com/megaease/easegress)](https://goreportcard.com/report/github.com/megaease/easegress)
+[![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/megaease/easegress/test.yml?branch=main)](https://github.com/megaease/easegress/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/megaease/easegress/branch/main/graph/badge.svg?token=5Q80B98LPI)](https://codecov.io/gh/megaease/easegress)
+[![Docker pulls](https://img.shields.io/docker/pulls/megaease/easegress.svg)](https://hub.docker.com/r/megaease/easegress)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/megaease/easegress)](https://github.com/megaease/easegress/blob/main/go.mod)
+[![Join MegaEase Slack](https://img.shields.io/badge/slack-megaease-brightgreen?logo=slack)](https://join.slack.com/t/openmegaease/shared_invite/zt-upo7v306-lYPHvVwKnvwlqR0Zl2vveA)
 
 <a href="https://megaease.com/easegress">
     <img src="./doc/imgs/easegress.svg"
@@ -15,7 +21,9 @@
     - [Setting up Easegress](#setting-up-easegress)
     - [Create an HTTPServer and Pipeline](#create-an-httpserver-and-pipeline)
     - [Test](#test)
-    - [More Filters](#more-filters)
+    - [Add Another Pipeline](#add-another-pipeline)
+    - [Update the HTTPServer](#update-the-httpserver)
+    - [Test the RSS Pipeline](#test-the-rss-pipeline)
   - [Documentation](#documentation)
   - [Roadmap](#roadmap)
   - [Community](#community)
@@ -45,12 +53,12 @@ The architecture of Easegress:
     - HTTP/2
     - HTTP/3(QUIC)
     - MQTT
-  - **Rich Routing Rules:** exact path, path prefix, regular expression of the path, method, headers.
+  - **Rich Routing Rules:** exact path, path prefix, regular expression of the path, method, headers, clientIPs.
   - **Resilience&Fault Tolerance**
-    - **Circuit breaker:** temporarily blocks possible failures.
-    - **Rate limiter:** limits the rate of incoming requests.
-    - **Retryer:** repeats failed executions.
-    - **Time limiter:** limits the duration of execution.
+    - **CircuitBreaker:** temporarily blocks possible failures.
+    - **RateLimiter:** limits the rate of incoming requests.
+    - **Retry:** repeats failed executions.
+    - **TimeLimiter:** limits the duration of execution.
   - **Deployment Management**
     - **Blue-green Strategy:** switches traffic at one time.
     - **Canary Strategy:** schedules traffic slightly.
@@ -65,7 +73,6 @@ The architecture of Easegress:
     - **OAuth2:** validates [OAuth/2](https://datatracker.ietf.org/doc/html/rfc6749) requests.
     - **Let's Encrypt:** automatically manage certificate files.
   - **Pipeline-Filter Mechanism**
-    - **Chain of Responsibility Pattern:** orchestrates filters chain.
     - **Filter Management:** makes it easy to develop new filters.
   - **Service Mesh**
     - **Mesh Master:** is the control plane to manage the lifecycle of mesh services.
@@ -81,15 +88,14 @@ The architecture of Easegress:
 - **High Performance and Availability**
   - **Adaption**: adapts request, response in the handling chain.
   - **Validation**: headers validation, OAuth2, JWT, and HMAC verification.
-  - **Load Balance:** round-robin, random, weighted random, IP hash, header hash.
+  - **Load Balance:** round-robin, random, weighted random, IP hash, header hash and support sticky sessions.
   - **Cache:** for the backend servers.
   - **Compression:** compresses body for the response.
   - **Hot-Update:** updates both config and binary of Easegress in place without losing connections.
 - **Operation**
   - **Easy to Integrate:** command line(`egctl`), MegaEase Portal, HTTP clients such as curl, postman, etc.
   - **Distributed Tracing**
-    - Built-in [Open Zipkin](https://zipkin.io/)
-    - [Open Tracing](https://opentracing.io/) for vendor-neutral APIs
+    - Built-in [OpenTelemetry](https://opentelemetry.io/), which provides a vendor-neutral API.
   - **Observability**
     - **Node:** role(primary, secondary), raft leader status, healthy or not, last heartbeat time, and so on
     - **Traffic:** in multi-dimension: server and backend.
@@ -103,42 +109,49 @@ The architecture of Easegress:
 
 The following examples show how to use Easegress for different scenarios.
 
-- [API Aggregator](./doc/cookbook/api-aggregator.md) - Aggregating many APIs into a single API.
+- [API Aggregation](./doc/cookbook/api-aggregation.md) - Aggregating many APIs into a single API.
 - [Cluster Deployment](./doc/cookbook/multi-node-cluster.md) - How to deploy multiple Easegress cluster nodes.
+- [Canary Release](./doc/cookbook/canary-release.md) - How to do canary release with Easegress.
 - [Distributed Tracing](./doc/cookbook/distributed-tracing.md) - How to do APM tracing  - Zipkin.
 - [FaaS](./doc/cookbook/faas.md) - Supporting Knative FaaS integration
 - [Flash Sale](./doc/cookbook/flash-sale.md) - How to do high concurrent promotion sales with Easegress
 - [Kubernetes Ingress Controller](./doc/cookbook/k8s-ingress-controller.md) - How to integrate with Kubernetes as ingress controller
 - [LoadBalancer](./doc/cookbook/load-balancer.md) - A number of the strategies of load balancing
 - [MQTTProxy](./doc/cookbook/mqtt-proxy.md) - An Example to MQTT proxy with Kafka backend.
+- [Multiple API Orchestration](./doc/cookbook/translation-bot.md) - An Telegram translation bot.
 - [Performance](./doc/cookbook/performance.md) - Performance optimization - compression, caching etc.
 - [Pipeline](./doc/cookbook/pipeline.md) - How to orchestrate HTTP filters for requests/responses handling
-- [Resilience and Fault Tolerance](./doc/cookbook/resilience.md) - Circuit Breaker, Rate Limiter, Retryer, Time limiter, etc. (Porting from [Java resilience4j](https://github.com/resilience4j/resilience4j))
+- [Resilience and Fault Tolerance](./doc/cookbook/resilience.md) - CircuitBreaker, RateLimiter, Retry, TimeLimiter, etc. (Porting from [Java resilience4j](https://github.com/resilience4j/resilience4j))
 - [Security](./doc/cookbook/security.md) - How to do authentication by Header, JWT, HMAC, OAuth2, etc.
 - [Service Proxy](./doc/cookbook/service-proxy.md) - Supporting the Microservice registries - Zookeeper, Eureka, Consul, Nacos, etc.
 - [WebAssembly](./doc/cookbook/wasm.md) - Using AssemblyScript to extend the Easegress
 - [WebSocket](./doc/cookbook/websocket.md) - WebSocket proxy for Easegress
 - [Workflow](./doc/cookbook/workflow.md) - An Example to make a workflow for a number of APIs.
 
-
 For full list, see [Cookbook](./doc/README.md#1-cookbook--how-to-guide).
 
 ## Getting Started
 
-The basic common usage of Easegress is to quickly set up proxy for the backend servers. We split it into multiple simple steps to illustrate the essential concepts and operations.
+The basic usage of Easegress is to quickly set up a proxy for the backend
+servers. In this section, we will first set up a reverse proxy, and then
+demonstrate the API orchestration feature by including more components in the
+configuration, we will also show the essential concepts and operations of
+Easegress.
 
 ### Setting up Easegress
 
-We can download the latest or history binaries from the [release page](https://github.com/megaease/easegress/releases). The following shell script will do:
+We can download the latest or history binaries from the
+[release page](https://github.com/megaease/easegress/releases). The following
+shell script will:
 
-- Download and extract the latest binaries to `./easegress` folder  
+- Download and extract the latest binaries to `./easegress` folder
 - Install the Easegress Systemd service.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/megaease/easegress/main/scripts/install.sh)"
 ```
 
-or if we can install Easegress from source code:
+or we can install Easegress from source code:
 
 ```bash
 git clone https://github.com/megaease/easegress && cd easegress
@@ -147,7 +160,7 @@ make
 
 > **Note**:
 >
-> - This repo requires Go 1.17+ compiler for the build.
+> - This repo requires Go 1.19+ compiler for the build.
 > - If you need the WebAssembly feature, please run `make wasm`.
 
 Then we can add the binary directory to the `PATH` and execute the server:
@@ -155,45 +168,51 @@ Then we can add the binary directory to the `PATH` and execute the server:
 ```bash
 $ export PATH=${PATH}:$(pwd)/bin/
 $ easegress-server
-2021-11-26T16:10:08.419+08:00	INFO	cluster/config.go:172	etcd config: init-cluster:eg-default-name=http://localhost:2380 cluster-state:new force-new-cluster:false
-2021-11-26T16:10:09.515+08:00	INFO	cluster/cluster.go:400	client connect with endpoints: [http://localhost:2380]
-2021-11-26T16:10:09.516+08:00	INFO	cluster/cluster.go:413	client is ready
-2021-11-26T16:10:09.608+08:00	INFO	cluster/cluster.go:692	server is ready
-2021-11-26T16:10:09.649+08:00	INFO	cluster/cluster.go:546	lease is ready (grant new one: b6a7d5b4b68ff07)
-2021-11-26T16:10:09.649+08:00	INFO	cluster/cluster.go:219	cluster is ready
-2021-11-26T16:10:09.669+08:00	INFO	supervisor/supervisor.go:137	create TrafficController
-2021-11-26T16:10:09.67+08:00	INFO	supervisor/supervisor.go:137	create RawConfigTrafficController
-2021-11-26T16:10:09.67+08:00	INFO	supervisor/supervisor.go:137	create ServiceRegistry
-2021-11-26T16:10:09.671+08:00	INFO	supervisor/supervisor.go:137	create StatusSyncController
-2021-11-26T16:10:09.671+08:00	INFO	cluster/cluster.go:586	session is ready
-2021-11-26T16:10:09.671+08:00	INFO	api/api.go:73	register api group admin
-2021-11-26T16:10:09.671+08:00	INFO	api/server.go:78	api server running in localhost:2381
-2021-11-26T16:10:14.673+08:00	INFO	cluster/member.go:223	self ID changed from 0 to 689e371e88f78b6a
-2021-11-26T16:10:14.674+08:00	INFO	cluster/member.go:157	store clusterMembers: eg-default-name(689e371e88f78b6a)=http://localhost:2380
-2021-11-26T16:10:14.674+08:00	INFO	cluster/member.go:158	store knownMembers  : eg-default-name(689e371e88f78b6a)=http://localhost:2380
+2022-07-04T13:47:36.579+08:00   INFO    cluster/config.go:106   etcd config: advertise-client-urls: [{Scheme:http Opaque: User: Host:localhost:2379 Path: RawPath: ForceQuery:false RawQuery: Fragment: RawFragment:}] advertise-peer-urls: [{Scheme:http Opaque: User: Host:localhost:2380 Path: RawPath: ForceQuery:false RawQuery: Fragment: RawFragment:}] init-cluster: eg-default-name=http://localhost:2380 cluster-state: new force-new-cluster: false
+2022-07-04T13:47:37.516+08:00   INFO    cluster/cluster.go:332  client connect with endpoints: [http://localhost:2380]
+2022-07-04T13:47:37.521+08:00   INFO    cluster/cluster.go:346  client is ready
+2022-07-04T13:47:37.529+08:00   INFO    cluster/cluster.go:638  server is ready
+2022-07-04T13:47:37.534+08:00   INFO    cluster/cluster.go:498  lease is ready (grant new one: b6a81c7bffb1a07)
+2022-07-04T13:47:37.534+08:00   INFO    cluster/cluster.go:218  cluster is ready
+2022-07-04T13:47:37.541+08:00   INFO    supervisor/supervisor.go:137    create TrafficController
+2022-07-04T13:47:37.542+08:00   INFO    supervisor/supervisor.go:137    create RawConfigTrafficController
+2022-07-04T13:47:37.544+08:00   INFO    supervisor/supervisor.go:137    create ServiceRegistry
+2022-07-04T13:47:37.544+08:00   INFO    supervisor/supervisor.go:137    create StatusSyncController
+2022-07-04T13:47:37.544+08:00   INFO    statussynccontroller/statussynccontroller.go:139        StatusUpdateMaxBatchSize is 20
+2022-07-04T13:47:37.544+08:00   INFO    cluster/cluster.go:538  session is ready
+2022-07-04T13:47:37.545+08:00   INFO    api/api.go:73   register api group admin
+2022-07-04T13:47:37.545+08:00   INFO    api/server.go:86        api server running in localhost:2381
 ```
 
-The default target of Makefile is to compile two binary into the directory `bin/`. `bin/easegress-server` is the server-side binary, `bin/egctl` is the client-side binary. We could add it to the `$PATH` for simplifying the following commands.
+The default target of Makefile is to compile two binary into the `bin`
+directory. `bin/easegress-server` is the server-side binary, `bin/egctl` is the
+client-side binary. We could add it to the `$PATH` to simplify the following
+commands.
 
-We could run `easegress-server` without specifying any arguments, which launch itself by opening default ports 2379, 2380, 2381. Of course, we can change them in the config file or command arguments that are explained well in `easegress-server --help`.
+We could run `easegress-server` without specifying any arguments, which launch
+itself by opening default ports 2379, 2380, and 2381. We can change them in the
+configuration file or command-line arguments that are explained well in
+`easegress-server --help`.
 
 ```bash
-$ egctl member list | grep "cluster-role"
-    cluster-role: primary
-$ egctl member list | grep "api-addr"
-    api-addr: localhost:2381
-$ egctl member list | grep "name"
-    name: eg-default-name
-    cluster-name: eg-cluster-default-name
+$ egctl member list | grep "ClusterRole"
+    ClusterRole: primary
+$ egctl member list | grep "APIAddr"
+    APIAddr: localhost:2381
+$ egctl member list | grep "Name"
+    ClusterName: eg-cluster-default-name
+    Name: eg-default-name
 $ egctl member list | grep "id"
     id: 689e371e88f78b6a
 ```
 
-After launching successfully, we could check the status of the one-node cluster. It shows the static options and dynamic status of heartbeat and etcd.
+After launching successfully, we could check the status of the one-node
+cluster. It shows the static options and dynamic status of heartbeat and etcd.
 
 ### Create an HTTPServer and Pipeline
 
-Now let's create an HTTPServer listening on port 10080 to handle the HTTP traffic.
+Now let's create an HTTPServer listening on port 10080 to handle the HTTP
+traffic.
 
 ```bash
 $ echo '
@@ -208,19 +227,21 @@ rules:
       backend: pipeline-demo' | egctl object create
 ```
 
-The rules of routers above mean that it will lead the traffic with the prefix `/pipeline` to the pipeline `pipeline-demo`, which will be created below. If we `curl` it before created, it will return 503.
+The rules above mean it will forward the traffic with the prefix `/pipeline` to
+the `pipeline-demo` pipeline because the pipeline hasn't been created yet,
+we will get 503 if we `curl` it now. Next, let's create the pipeline.
 
 ```bash
 $ echo '
 name: pipeline-demo
-kind: HTTPPipeline
+kind: Pipeline
 flow:
   - filter: proxy
 filters:
   - name: proxy
     kind: Proxy
-    mainPool:
-      servers:
+    pools:
+    - servers:
       - url: http://127.0.0.1:9095
       - url: http://127.0.0.1:9096
       - url: http://127.0.0.1:9097
@@ -228,17 +249,19 @@ filters:
         policy: roundRobin' | egctl object create
 ```
 
-The pipeline means it will do proxy for 3 backend endpoints in load balance policy `roundRobin`.
+The pipeline means it will forward traffic to 3 backend endpoints, using the
+`roundRobin` load balance policy.
 
 ### Test
 
-Now you can use some HTTP clients such as `curl` to test the feature:
+Now you can use an HTTP clients, such as `curl`, to test the feature:
 
 ```bash
 curl -v http://127.0.0.1:10080/pipeline
 ```
 
-If you are not set up some applications to handle the 9095, 9096, and 9097 in the localhost, it will return 503 too. We prepare a simple service to let us test handily, the example shows:
+If you haven't set up backend services on ports 9095, 9096, and 9097 of the
+localhost, it returns 503 too. We provide a simple service for this:
 
 ```bash
 $ go run example/backend-service/mirror/mirror.go & # Running in background
@@ -251,61 +274,134 @@ Header: map[Accept:[*/*] Accept-Encoding:[gzip] Content-Type:[application/x-www-
 Body  : Hello, Easegress
 ```
 
-### More Filters
+### Add Another Pipeline
 
-Now we want to add more features to the pipeline, then we could add kinds of filters to the pipeline. For example, we want validation and request adaptation for the `pipeline-demo`.
+Now let's add another pipeline, it will get the address of an RSS feed from the
+request, read the RSS feed, build the article list into a Slack message, and
+then send it to Slack. But before creating the pipeline, please follow [this
+document](https://api.slack.com/messaging/webhooks) to create your own Slack
+webhook URL and replace the one in the below command with it.
 
 <p align="center">
-  <img src="./doc/imgs/pipeline-demo.png" width=240>
+  <img src="./doc/imgs/rss-pipeline.png" width=480>
 </p>
 
 ```bash
-$ cat pipeline-demo.yaml
-name: pipeline-demo
-kind: HTTPPipeline
-flow:
-  - filter: validator
-    jumpIf: { invalid: END }
-  - filter: requestAdaptor
-  - filter: proxy
-filters:
-  - name: validator
-    kind: Validator
-    headers:
-      Content-Type:
-        values:
-        - application/json
-  - name: requestAdaptor
-    kind: RequestAdaptor
-    header:
-      set:
-        X-Adapt-Key: goodplan
-  - name: proxy
-    kind: Proxy
-    mainPool:
-      servers:
-      - url: http://127.0.0.1:9095
-      - url: http://127.0.0.1:9096
-      - url: http://127.0.0.1:9097
-      loadBalance:
-        policy: roundRobin
+$ echo '
+name: rss-pipeline
+kind: Pipeline
 
-$ egctl object update -f pipeline-demo.yaml
+flow:
+- filter: validator
+- filter: buildRssRequest
+  namespace: rss
+- filter: sendRssRequest
+  namespace: rss
+- filter: decompressResponse
+  namespace: rss
+- filter: buildSlackRequest
+  namespace: slack
+- filter: sendSlackRequest
+  namespace: slack
+- filter: buildResponse
+
+filters:
+- name: validator
+  kind: Validator
+  headers:
+    "X-Rss-Url":
+       regexp: ^https?://.+$
+
+- name: buildRssRequest
+  kind: RequestBuilder
+  template: |
+    url: /developers/feed2json/convert?url={{index (index .requests.DEFAULT.Header "X-Rss-Url") 0 | urlquery}}
+
+- name: sendRssRequest
+  kind: Proxy
+  pools:
+  - loadBalance:
+      policy: roundRobin
+    servers:
+    - url: https://www.toptal.com
+  compression:
+    minLength: 4096
+
+- name: buildSlackRequest
+  kind: RequestBuilder
+  template: |
+    method: POST
+    url: /services/T0XXXXXXXXX/B0YYYYYYY/ZZZZZZZZZZZZZZZZZZZZ   # This the Slack webhook address, please change it to your own.
+    body: |
+      {
+         "text": "Recent posts - {{.responses.rss.JSONBody.title}}",
+         "blocks": [{
+            "type": "section",
+            "text": {
+              "type": "plain_text",
+              "text": "Recent posts - {{.responses.rss.JSONBody.title}}"
+            }
+         }, {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "{{range $index, $item := .responses.rss.JSONBody.items}}• <{{$item.url}}|{{$item.title}}>\n{{end}}"
+         }}]
+      }
+
+- name: sendSlackRequest
+  kind: Proxy
+  pools:
+  - loadBalance:
+      policy: roundRobin
+    servers:
+    - url: https://hooks.slack.com
+  compression:
+    minLength: 4096
+
+- name: decompressResponse
+  kind: ResponseAdaptor
+  decompress: gzip
+
+- name: buildResponse
+  kind: ResponseBuilder
+  template: |
+    statusCode: 200
+    body: RSS feed has been sent to Slack successfully.' | egctl object create
 ```
 
-After updating the pipeline, the original `curl -v http://127.0.0.1:10080/pipeline` will get 400 because of the validating. So we changed it to satisfy the limitation:
+### Update the HTTPServer
+
+Now let's update the HTTPServer to forward the traffic with prefix `/rss` to
+the new pipeline.
 
 ```bash
-$ curl http://127.0.0.1:10080/pipeline -H 'Content-Type: application/json' -d '{"message": "Hello, Easegress"}'
-Your Request
-===============
-Method: POST
-URL   : /pipeline
-Header: map[Accept:[*/*] Accept-Encoding:[gzip] Content-Type:[application/json] User-Agent:[curl/7.64.1] X-Adapt-Key:[goodplan]]
-Body  : {"message": "Hello, Easegress"}
+$ echo '
+kind: HTTPServer
+name: server-demo
+port: 10080
+keepAlive: true
+https: false
+rules:
+  - paths:
+    - pathPrefix: /rss          # +
+      backend: rss-pipeline     # +
+    - pathPrefix: /pipeline
+      backend: pipeline-demo' | egctl object update
 ```
 
-We can also see Easegress send one more header `X-Adapt-Key: goodplan` to the mirror service.
+### Test the RSS Pipeline
+
+Execute the below command, your slack will receive the article list of the RSS
+feed.
+
+```bash
+curl -H X-Rss-Url:https://hnrss.org/newest?count=5 http://127.0.0.1:10080/rss
+```
+
+Please note the maximum message size Slack allowed is about 3K, so you will
+need to limit the number of articles returned by the RSS feed of some
+sites(e.g. Hack News).
 
 ## Documentation
 

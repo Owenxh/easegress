@@ -146,22 +146,32 @@ func (d *Domain) waitDNSRecord(value string) error {
 		name += d.nameInPunyCode
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	r := net.DefaultResolver
+	if addr := d.DNSProvider["nsAddress"]; addr != "" {
+		network := d.DNSProvider["nsNetwork"]
+		r := net.Resolver{PreferGo: true}
+		r.Dial = func(ctx context.Context, n, a string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 10 * time.Second}
+			if network != "" {
+				n = network
+			}
+			return d.DialContext(ctx, n, addr)
+		}
+	}
 
 	for {
-		values, err := net.DefaultResolver.LookupTXT(d.ctx, name)
-		if err == nil {
+		select {
+		case <-time.After(5 * time.Second):
+		case <-d.ctx.Done():
+			return d.ctx.Err()
+		}
+
+		if values, err := r.LookupTXT(d.ctx, name); err == nil {
 			for _, v := range values {
 				if v == value {
 					return nil
 				}
 			}
-		}
-		select {
-		case <-ticker.C:
-		case <-d.ctx.Done():
-			return d.ctx.Err()
 		}
 	}
 }
@@ -181,10 +191,15 @@ func (d *Domain) runDNS01(acm *AutoCertManager, chal *acme.Challenge) error {
 		return err
 	}
 
-	record := libdns.Record{
-		Type: "TXT",
-		Name: "_acme-challenge",
+	name := "_acme-challenge."
+	if d.isWildcard() {
+		name += d.nameInPunyCode[2:] // skip '*.'
+	} else {
+		name += d.nameInPunyCode
 	}
+	name = name[0 : len(name)-len(d.Zone())-1]
+	record := libdns.Record{Type: "TXT", Name: name}
+
 	// ignore the error of DeleteRecords because the record may not exist
 	dp.DeleteRecords(d.ctx, d.Zone(), []libdns.Record{record})
 

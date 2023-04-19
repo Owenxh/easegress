@@ -18,7 +18,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"path"
@@ -26,11 +25,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	v1alpha1 "github.com/megaease/easemesh-api/v1alpha1"
+	v2alpha1 "github.com/megaease/easemesh-api/v2alpha1"
 
 	"github.com/megaease/easegress/pkg/api"
 	"github.com/megaease/easegress/pkg/logger"
 	"github.com/megaease/easegress/pkg/object/meshcontroller/spec"
+	"github.com/megaease/easegress/pkg/util/codectool"
 )
 
 type tenantsByOrder []*spec.Tenant
@@ -53,9 +53,9 @@ func (a *API) listTenants(w http.ResponseWriter, r *http.Request) {
 
 	sort.Sort(tenantsByOrder(specs))
 
-	var apiSpecs []*v1alpha1.Tenant
+	var apiSpecs []*v2alpha1.Tenant
 	for _, v := range specs {
-		tenant := &v1alpha1.Tenant{}
+		tenant := &v2alpha1.Tenant{}
 		err := a.convertSpecToPB(v, &tenant)
 		if err != nil {
 			logger.Errorf("convert spec %#v to pb spec failed: %v", v, err)
@@ -64,17 +64,12 @@ func (a *API) listTenants(w http.ResponseWriter, r *http.Request) {
 		apiSpecs = append(apiSpecs, tenant)
 	}
 
-	buff, err := json.Marshal(apiSpecs)
-	if err != nil {
-		panic(fmt.Errorf("marshal %#v to json failed: %v", specs, err))
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(buff)
+	buff := codectool.MustMarshalJSON(apiSpecs)
+	a.writeJSONBody(w, buff)
 }
 
 func (a *API) createTenant(w http.ResponseWriter, r *http.Request) {
-	pbTenantSpec := &v1alpha1.Tenant{}
+	pbTenantSpec := &v2alpha1.Tenant{}
 	tenantSpec := &spec.Tenant{}
 
 	err := a.readAPISpec(r, pbTenantSpec, tenantSpec)
@@ -118,23 +113,18 @@ func (a *API) getTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pbTenantSpec := &v1alpha1.Tenant{}
+	pbTenantSpec := &v2alpha1.Tenant{}
 	err = a.convertSpecToPB(tenantSpec, pbTenantSpec)
 	if err != nil {
 		panic(fmt.Errorf("convert spec %#v to pb failed: %v", tenantSpec, err))
 	}
 
-	buff, err := json.Marshal(pbTenantSpec)
-	if err != nil {
-		panic(fmt.Errorf("marshal %#v to json failed: %v", pbTenantSpec, err))
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(buff)
+	buff := codectool.MustMarshalJSON(pbTenantSpec)
+	a.writeJSONBody(w, buff)
 }
 
 func (a *API) updateTenant(w http.ResponseWriter, r *http.Request) {
-	pbTenantSpec := &v1alpha1.Tenant{}
+	pbTenantSpec := &v2alpha1.Tenant{}
 	tenantSpec := &spec.Tenant{}
 
 	tenantName, err := a.readTenantName(r)

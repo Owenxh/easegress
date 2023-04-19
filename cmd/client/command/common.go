@@ -15,30 +15,34 @@
  * limitations under the License.
  */
 
+// Package command implements commands of Easegress client.
 package command
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
-	yamljsontool "github.com/ghodss/yaml"
+	"github.com/megaease/easegress/pkg/util/codectool"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v2"
 )
 
 type (
 	// GlobalFlags is the global flags for the whole client.
 	GlobalFlags struct {
-		Server       string
-		OutputFormat string
+		Server             string
+		ForceTLS           bool
+		InsecureSkipVerify bool
+		OutputFormat       string
 	}
 
 	// APIErr is the standard return of error.
 	APIErr struct {
-		Code    int    `yaml:"code"`
-		Message string `yaml:"message"`
+		Code    int    `json:"code"`
+		Message string `json:"message"`
 	}
 )
 
@@ -46,7 +50,7 @@ type (
 var CommandlineGlobalFlags GlobalFlags
 
 const (
-	apiURL = "/apis/v1"
+	apiURL = "/apis/v2"
 
 	healthURL = apiURL + "/healthz"
 
@@ -113,37 +117,49 @@ const (
 
 	// MeshIngressURL is the mesh ingress path.
 	MeshIngressURL = apiURL + "/mesh/ingresses/%s"
+
+	// HTTPProtocol is prefix for HTTP protocol
+	HTTPProtocol = "http://"
+	// HTTPSProtocol is prefix for HTTPS protocol
+	HTTPSProtocol = "https://"
 )
 
 func makeURL(urlTemplate string, a ...interface{}) string {
-	return "http://" + CommandlineGlobalFlags.Server + fmt.Sprintf(urlTemplate, a...)
+	return CommandlineGlobalFlags.Server + fmt.Sprintf(urlTemplate, a...)
 }
 
 func successfulStatusCode(code int) bool {
 	return code >= 200 && code < 300
 }
 
-func handleRequest(httpMethod string, url string, reqBody []byte, cmd *cobra.Command) {
-	req, err := http.NewRequest(httpMethod, url, bytes.NewReader(reqBody))
-	if err != nil {
-		ExitWithError(err)
+func handleRequest(httpMethod string, url string, yamlBody []byte, cmd *cobra.Command) {
+	var jsonBody []byte
+	if yamlBody != nil {
+		var err error
+		jsonBody, err = codectool.YAMLToJSON(yamlBody)
+		if err != nil {
+			ExitWithErrorf("yaml %s to json failed: %v", yamlBody, err)
+		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		ExitWithErrorf("%s failed: %v", cmd.Short, err)
+	p := HTTPProtocol
+	if CommandlineGlobalFlags.ForceTLS {
+		p = HTTPSProtocol
 	}
-	defer resp.Body.Close()
+	tr := http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: CommandlineGlobalFlags.InsecureSkipVerify},
+	}
+	client := &http.Client{Transport: &tr}
+	resp, body := doRequest(httpMethod, p+url, jsonBody, client, cmd)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		ExitWithErrorf("%s failed: %v", cmd.Short, err)
+	msg := string(body)
+	if p == HTTPProtocol && resp.StatusCode == http.StatusBadRequest && strings.Contains(strings.ToUpper(msg), "HTTPS") {
+		resp, body = doRequest(httpMethod, HTTPSProtocol+url, jsonBody, client, cmd)
 	}
 
 	if !successfulStatusCode(resp.StatusCode) {
-		msg := string(body)
 		apiErr := &APIErr{}
-		err = yaml.Unmarshal(body, apiErr)
+		err := codectool.Unmarshal(body, apiErr)
 		if err == nil {
 			msg = apiErr.Message
 		}
@@ -155,17 +171,35 @@ func handleRequest(httpMethod string, url string, reqBody []byte, cmd *cobra.Com
 	}
 }
 
+func doRequest(httpMethod string, url string, jsonBody []byte, client *http.Client, cmd *cobra.Command) (*http.Response, []byte) {
+	req, err := http.NewRequest(httpMethod, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		ExitWithError(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		ExitWithErrorf("%s failed: %v", cmd.Short, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		ExitWithErrorf("%s failed: %v", cmd.Short, err)
+	}
+	return resp, body
+}
+
 func printBody(body []byte) {
 	var output []byte
 	switch CommandlineGlobalFlags.OutputFormat {
 	case "yaml":
-		output = body
-	case "json":
 		var err error
-		output, err = yamljsontool.YAMLToJSON(body)
+		output, err = codectool.JSONToYAML(body)
 		if err != nil {
-			ExitWithErrorf("yaml %s to json failed: %v", body, err)
+			ExitWithErrorf("json %s to yaml failed: %v", body, err)
 		}
+	case "json":
+		output = body
 	}
 
 	fmt.Printf("%s", output)

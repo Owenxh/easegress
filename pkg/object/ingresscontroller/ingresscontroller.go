@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package ingresscontroller implements a K8s ingress controller.
 package ingresscontroller
 
 import (
@@ -56,11 +57,11 @@ type (
 
 	// Spec is the ingress controller spec
 	Spec struct {
-		HTTPServer   *httpserver.Spec `yaml:"httpServer" jsonschema:"required"`
-		KubeConfig   string           `yaml:"kubeConfig" jsonschema:"omitempty"`
-		MasterURL    string           `yaml:"masterURL" jsonschema:"omitempty"`
-		Namespaces   []string         `yaml:"namespaces" jsonschema:"omitempty"`
-		IngressClass string           `yaml:"ingressClass" jsonschema:"omitempty"`
+		HTTPServer   *httpserver.Spec `json:"httpServer" jsonschema:"required"`
+		KubeConfig   string           `json:"kubeConfig" jsonschema:"omitempty"`
+		MasterURL    string           `json:"masterURL" jsonschema:"omitempty"`
+		Namespaces   []string         `json:"namespaces" jsonschema:"omitempty"`
+		IngressClass string           `json:"ingressClass" jsonschema:"omitempty"`
 	}
 )
 
@@ -207,7 +208,7 @@ func (ic *IngressController) translate() error {
 
 	pipelines := st.pipelineSpecs()
 	for _, spec := range pipelines {
-		_, err = ic.tc.ApplyHTTPPipelineForSpec(ic.namespace, spec)
+		_, err = ic.tc.ApplyPipelineForSpec(ic.namespace, spec)
 		if err != nil {
 			logger.Errorf("BUG: failed to apply pipeline spec to %s: %v", spec.Name(), err)
 		}
@@ -215,16 +216,16 @@ func (ic *IngressController) translate() error {
 	logger.Debugf("pipelines updated")
 
 	spec := st.httpServerSpec()
-	_, err = ic.tc.ApplyHTTPServerForSpec(ic.namespace, spec)
+	_, err = ic.tc.ApplyTrafficGateForSpec(ic.namespace, spec)
 	if err != nil {
 		logger.Errorf("BUG: failed to apply http server spec: %v", err)
 	} else {
 		logger.Debugf("http server updated")
 	}
 
-	for _, p := range ic.tc.ListHTTPPipelines(ic.namespace) {
+	for _, p := range ic.tc.ListPipelines(ic.namespace) {
 		if _, ok := pipelines[p.Spec().Name()]; !ok {
-			ic.tc.DeleteHTTPPipeline(ic.namespace, p.Spec().Name())
+			ic.tc.DeletePipeline(ic.namespace, p.Spec().Name())
 		}
 	}
 
